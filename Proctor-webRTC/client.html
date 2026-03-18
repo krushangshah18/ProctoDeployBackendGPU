@@ -1,0 +1,109 @@
+<!doctype html>
+<html>
+  <head>
+    <title>AI Proctor — Candidate</title>
+    <style>
+      body { font-family: monospace; padding: 1rem; background: #111; color: #eee; }
+      h2 { margin-bottom: 0.25rem; }
+      #status { color: #aaa; font-size: 0.85rem; margin: 0.4rem 0; }
+      video { display: block; max-width: 640px; border: 1px solid #333; }
+
+      #controls { display: flex; gap: 0.75rem; margin-bottom: 0.75rem; align-items: center; }
+      button {
+        padding: 0.5rem 1.25rem;
+        border: none; border-radius: 5px;
+        font-size: 0.95rem; font-weight: bold; cursor: pointer;
+        transition: opacity 0.2s;
+      }
+      button:disabled { opacity: 0.35; cursor: not-allowed; }
+      #btn-start { background: #2a9d5c; color: #fff; }
+      #btn-end   { background: #c0392b; color: #fff; }
+      #indicator {
+        width: 10px; height: 10px; border-radius: 50%;
+        background: #444; display: inline-block;
+      }
+      #indicator.active { background: #e74c3c; box-shadow: 0 0 6px #e74c3c; }
+
+      #stats-container {
+        display: flex;
+        gap: 1.5rem;
+        margin-top: 1rem;
+        flex-wrap: wrap;
+      }
+      .stat-box {
+        background: #1e1e1e;
+        border: 1px solid #333;
+        border-radius: 6px;
+        padding: 0.75rem 1rem;
+        min-width: 200px;
+      }
+      .stat-box h3 { margin: 0 0 0.5rem; font-size: 0.8rem; color: #888; text-transform: uppercase; }
+      .stat-row { display: flex; justify-content: space-between; gap: 1rem; font-size: 0.9rem; }
+      .stat-label { color: #888; }
+      .stat-value { color: #7cf; font-weight: bold; }
+      .stat-value.warn { color: #fc7; }
+      .stat-value.bad  { color: #f77; }
+
+      /* ── Alert / Warning banners ── */
+      #alert-container {
+        max-width: 640px;
+        margin-top: 0.5rem;
+        display: flex;
+        flex-direction: column;
+        gap: 0.35rem;
+      }
+      .banner {
+        padding: 0.55rem 1rem;
+        border-radius: 5px;
+        font-size: 0.92rem;
+        font-weight: bold;
+        display: flex;
+        align-items: center;
+        gap: 0.6rem;
+      }
+      .banner-warn  { background: #7a5200; border-left: 4px solid #f5a623; color: #ffd580; }
+      .banner-alert { background: #5c0a0a; border-left: 4px solid #e74c3c; color: #ffaaaa; }
+      .banner-icon  { font-size: 1.1rem; flex-shrink: 0; }
+    </style>
+  </head>
+  <body>
+    <h2>AI Proctor — Candidate</h2>
+    <div id="controls">
+      <button id="btn-start">▶ Start Session</button>
+      <button id="btn-end" disabled>■ End Session</button>
+      <span id="indicator"></span>
+      <span id="indicator-label" style="color:#666; font-size:0.85rem;">Idle</span>
+    </div>
+    <div id="status"></div>
+    <div id="alert-container"></div>
+    <video id="video" autoplay playsinline muted></video>
+
+    <div id="stats-container">
+      <div class="stat-box">
+        <h3>Video (client → server)</h3>
+        <div class="stat-row"><span class="stat-label">FPS sent</span>       <span class="stat-value" id="s-fps">—</span></div>
+        <div class="stat-row"><span class="stat-label">Resolution</span>     <span class="stat-value" id="s-res">—</span></div>
+        <div class="stat-row"><span class="stat-label">Bitrate</span>        <span class="stat-value" id="s-vbr">—</span></div>
+        <div class="stat-row"><span class="stat-label">Packets lost</span>   <span class="stat-value" id="s-lost">—</span></div>
+        <div class="stat-row"><span class="stat-label">RTT</span>            <span class="stat-value" id="s-rtt">—</span></div>
+      </div>
+      <div class="stat-box">
+        <h3>Server-side</h3>
+        <div class="stat-row"><span class="stat-label">FPS received</span>   <span class="stat-value" id="srv-fps">—</span></div>
+        <div class="stat-row"><span class="stat-label">Jitter</span>         <span class="stat-value" id="srv-jitter">—</span></div>
+        <div class="stat-row"><span class="stat-label">Avg interval</span>   <span class="stat-value" id="srv-interval">—</span></div>
+        <div class="stat-row"><span class="stat-label">Total frames</span>   <span class="stat-value" id="srv-frames">—</span></div>
+        <div class="stat-row"><span class="stat-label">Resolution</span>     <span class="stat-value" id="srv-res">—</span></div>
+      </div>
+      <div class="stat-box">
+        <h3>Audio</h3>
+        <div class="stat-row"><span class="stat-label">Bitrate</span>        <span class="stat-value" id="s-abr">—</span></div>
+        <div class="stat-row"><span class="stat-label">Srv packet rate</span><span class="stat-value" id="srv-arate">—</span></div>
+        <div class="stat-row"><span class="stat-label">Sample rate</span>    <span class="stat-value" id="srv-asr">—</span></div>
+        <div class="stat-row"><span class="stat-label">Channels</span>       <span class="stat-value" id="srv-ach">—</span></div>
+      </div>
+    </div>
+
+    <script src="./client.js"></script>
+  </body>
+</html>

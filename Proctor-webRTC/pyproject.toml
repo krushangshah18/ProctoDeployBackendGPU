@@ -1,0 +1,25 @@
+[project]
+name = "webrtcandmodel"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+    # WebRTC transport
+    "aiortc>=1.14.0",
+    "av>=14.0.0",
+    "fastapi>=0.115.0",
+    "uvicorn>=0.30.0",
+    "aiofiles>=23.0.0",
+    # Vision — pinned to match mediapipe requirements
+    "mediapipe==0.10.11",
+    "numpy<2.0",
+    "opencv-python<4.10",
+    "ultralytics>=8.4.7",
+    # Audio / VAD
+    "pyaudio>=0.2.14",
+    "silero-vad>=6.2.1",
+    "torch>=2.0.0",
+    "protobuf==3.20.3",
+    "psutil>=7.2.2",
+]

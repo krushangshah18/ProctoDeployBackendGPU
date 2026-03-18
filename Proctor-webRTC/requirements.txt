@@ -1,0 +1,28 @@
+# ── Web framework ─────────────────────────────────────────────────────────────
+fastapi>=0.110.0
+uvicorn[standard]>=0.29.0
+python-multipart>=0.0.9
+aiofiles>=23.0.0
+
+# ── WebRTC ────────────────────────────────────────────────────────────────────
+aiortc>=1.9.0
+av>=12.0.0,<14.0.0              # pin upper bound — av 14 may break aiortc
+
+# ── ML / Vision ───────────────────────────────────────────────────────────────
+# torch/torchvision/torchaudio are installed separately in the Dockerfile
+# with the correct CUDA wheel URL — do NOT add them here.
+ultralytics>=8.1.0
+mediapipe>=0.10.11
+# opencv: let mediapipe install its required opencv-python version.
+# Do NOT add opencv-python-headless — having both opencv-python and
+# opencv-python-headless installed simultaneously causes cv2 import conflicts.
+
+# ── Utilities ─────────────────────────────────────────────────────────────────
+# numpy: cap below 2.0 — mediapipe 0.10.x is not compatible with numpy 2.x
+numpy>=1.26.0,<2.0
+psutil>=5.9.0
+# nvidia-ml-py: NVIDIA's official package; same API as deprecated pynvml.
+# Required by torch 2.x internals — using pynvml causes a FutureWarning.
+nvidia-ml-py>=12.0.0
+# silero-vad: pin below 6.0 — v6 changed the load_silero_vad API
+silero-vad>=5.1,<6.0

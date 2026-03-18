@@ -1,0 +1,305 @@
+<!doctype html>
+<html>
+  <head>
+    <title>AI Proctor — FPS Analysis</title>
+    <style>
+      * { box-sizing: border-box; }
+      body {
+        font-family: monospace;
+        background: #0d0d0d;
+        color: #eee;
+        margin: 0;
+        padding: 1rem;
+      }
+      h1 { font-size: 1.2rem; margin: 0 0 0.25rem; }
+      .subtitle { color: #555; font-size: 0.8rem; margin-bottom: 1.5rem; }
+
+      nav { margin-bottom: 1.5rem; }
+      nav a {
+        color: #7cf;
+        text-decoration: none;
+        margin-right: 1.5rem;
+        font-size: 0.85rem;
+      }
+      nav a:hover { text-decoration: underline; }
+
+      section { margin-bottom: 2rem; }
+      h2 { font-size: 0.95rem; color: #888; text-transform: uppercase; margin-bottom: 0.75rem; }
+
+      /* Aggregate table */
+      table {
+        border-collapse: collapse;
+        width: 100%;
+        max-width: 600px;
+        font-size: 0.9rem;
+      }
+      th {
+        text-align: left;
+        padding: 0.4rem 1rem;
+        color: #555;
+        border-bottom: 1px solid #222;
+        font-weight: normal;
+      }
+      td {
+        padding: 0.4rem 1rem;
+        border-bottom: 1px solid #1a1a1a;
+      }
+      td.num { text-align: right; font-weight: bold; }
+      td.good { color: #4c4; }
+      td.warn { color: #fc7; }
+      td.bad  { color: #f77; }
+
+      /* Chart */
+      #chart-wrap {
+        background: #111;
+        border: 1px solid #222;
+        border-radius: 6px;
+        padding: 1rem;
+        max-width: 700px;
+        position: relative;
+      }
+      canvas { display: block; width: 100%; }
+
+      /* Raw log */
+      #raw-wrap {
+        max-width: 700px;
+        max-height: 300px;
+        overflow-y: auto;
+        background: #111;
+        border: 1px solid #222;
+        border-radius: 6px;
+        padding: 0.5rem 0.75rem;
+        font-size: 0.78rem;
+      }
+      .log-row {
+        display: grid;
+        grid-template-columns: 90px 80px 70px 1fr;
+        gap: 0.5rem;
+        padding: 1px 0;
+        border-bottom: 1px solid #161616;
+      }
+      .log-row .lc { color: #7cf; }
+      .log-row .ll { color: #aaa; }
+      .log-row .lf { color: #4c4; font-weight: bold; }
+      .log-row .lf.warn { color: #fc7; }
+      .log-row .lf.bad  { color: #f77; }
+
+      #status { color: #555; font-size: 0.8rem; margin-bottom: 0.5rem; }
+      button {
+        background: #1e3a5f;
+        color: #7cf;
+        border: 1px solid #2a5a8f;
+        border-radius: 4px;
+        padding: 0.3rem 0.9rem;
+        cursor: pointer;
+        font-size: 0.85rem;
+        margin-right: 0.5rem;
+      }
+      button:hover { background: #2a4a7f; }
+    </style>
+  </head>
+  <body>
+    <h1>FPS Analysis</h1>
+    <p class="subtitle">How received FPS per candidate changes as concurrent users increase (1 → 5)</p>
+
+    <nav>
+      <a href="/monitor">← Monitor</a>
+      <a href="/">Candidate page</a>
+    </nav>
+
+    <div id="status">Loading...</div>
+    <div style="margin-bottom:1rem;">
+      <button onclick="load()">Refresh</button>
+      <button onclick="clearLog()">Clear log</button>
+    </div>
+
+    <!-- Aggregate summary -->
+    <section>
+      <h2>Aggregate — avg FPS by concurrent user count</h2>
+      <table>
+        <thead>
+          <tr>
+            <th>Concurrent users</th>
+            <th style="text-align:right">Avg FPS</th>
+            <th style="text-align:right">Min FPS</th>
+            <th style="text-align:right">Max FPS</th>
+            <th style="text-align:right">Samples</th>
+          </tr>
+        </thead>
+        <tbody id="agg-body">
+          <tr><td colspan="5" style="color:#444">No data yet — connect candidates to start collecting.</td></tr>
+        </tbody>
+      </table>
+    </section>
+
+    <!-- Bar chart -->
+    <section>
+      <h2>Avg FPS vs concurrent users</h2>
+      <div id="chart-wrap">
+        <canvas id="chart" height="200"></canvas>
+      </div>
+    </section>
+
+    <!-- Raw log -->
+    <section>
+      <h2>Raw log (latest first)</h2>
+      <div id="raw-wrap">
+        <div style="color:#444; padding: 0.5rem 0;">No samples yet.</div>
+      </div>
+    </section>
+
+    <script>
+      let _rawLog  = [];
+      let _byConc  = {};
+
+      // ── FPS colour helper ────────────────────────────────────────────────────
+      function fpsClass(fps) {
+        if (fps >= 20) return "good";
+        if (fps >= 10) return "warn";
+        return "bad";
+      }
+
+      // ── Aggregate table ──────────────────────────────────────────────────────
+      function renderTable(byConc) {
+        const tbody = document.getElementById("agg-body");
+        const keys  = Object.keys(byConc).map(Number).sort((a, b) => a - b);
+
+        if (!keys.length) {
+          tbody.innerHTML = `<tr><td colspan="5" style="color:#444">No data yet — connect candidates to start collecting.</td></tr>`;
+          return;
+        }
+
+        tbody.innerHTML = keys.map((c) => {
+          const d   = byConc[c];
+          const cls = fpsClass(d.avg_fps);
+          return `
+            <tr>
+              <td>${c} user${c > 1 ? "s" : ""}</td>
+              <td class="num ${cls}">${d.avg_fps}</td>
+              <td class="num">${d.min_fps}</td>
+              <td class="num">${d.max_fps}</td>
+              <td class="num" style="color:#555">${d.samples}</td>
+            </tr>`;
+        }).join("");
+      }
+
+      // ── Canvas bar chart ─────────────────────────────────────────────────────
+      function renderChart(byConc) {
+        const canvas = document.getElementById("chart");
+        const wrap   = document.getElementById("chart-wrap");
+        const W = wrap.clientWidth - 32;
+        const H = 200;
+        canvas.width  = W;
+        canvas.height = H;
+
+        const ctx  = canvas.getContext("2d");
+        ctx.clearRect(0, 0, W, H);
+
+        const keys = Object.keys(byConc).map(Number).sort((a, b) => a - b);
+        if (!keys.length) {
+          ctx.fillStyle = "#333";
+          ctx.font = "13px monospace";
+          ctx.fillText("No data yet", 20, 30);
+          return;
+        }
+
+        const maxFps   = 35;
+        const padL     = 40;
+        const padR     = 20;
+        const padT     = 20;
+        const padB     = 30;
+        const chartW   = W - padL - padR;
+        const chartH   = H - padT - padB;
+        const barW     = Math.min(60, (chartW / keys.length) * 0.6);
+        const step     = chartW / keys.length;
+
+        // Grid lines
+        ctx.strokeStyle = "#1e1e1e";
+        ctx.lineWidth = 1;
+        for (let y = 0; y <= 4; y++) {
+          const yy = padT + (chartH / 4) * y;
+          ctx.beginPath(); ctx.moveTo(padL, yy); ctx.lineTo(padL + chartW, yy); ctx.stroke();
+          const label = Math.round(maxFps - (maxFps / 4) * y);
+          ctx.fillStyle = "#444";
+          ctx.font = "10px monospace";
+          ctx.fillText(label, 2, yy + 4);
+        }
+
+        // Bars
+        keys.forEach((c, i) => {
+          const d    = byConc[c];
+          const x    = padL + step * i + (step - barW) / 2;
+          const barH = (d.avg_fps / maxFps) * chartH;
+          const y    = padT + chartH - barH;
+
+          const cls = fpsClass(d.avg_fps);
+          ctx.fillStyle = cls === "good" ? "#2a7a4a" : cls === "warn" ? "#7a6a1a" : "#7a2a2a";
+          ctx.fillRect(x, y, barW, barH);
+
+          // Avg fps label on bar
+          ctx.fillStyle = "#eee";
+          ctx.font = "bold 11px monospace";
+          ctx.textAlign = "center";
+          ctx.fillText(`${d.avg_fps}`, x + barW / 2, y - 4);
+
+          // X axis label
+          ctx.fillStyle = "#666";
+          ctx.font = "10px monospace";
+          ctx.fillText(`${c}u`, x + barW / 2, H - 8);
+        });
+
+        ctx.textAlign = "left";
+      }
+
+      // ── Raw log ──────────────────────────────────────────────────────────────
+      function renderRaw(rawLog) {
+        const wrap = document.getElementById("raw-wrap");
+        if (!rawLog.length) {
+          wrap.innerHTML = `<div style="color:#444; padding: 0.5rem 0;">No samples yet.</div>`;
+          return;
+        }
+        const rows = [...rawLog].reverse().slice(0, 200).map((e) => {
+          const ts  = new Date(e.t * 1000).toLocaleTimeString();
+          const cls = fpsClass(e.fps);
+          return `<div class="log-row">
+            <span class="ll">${ts}</span>
+            <span class="lc">${e.concurrent}u active</span>
+            <span class="lf ${cls}">${e.fps} fps</span>
+            <span class="ll">${e.label}</span>
+          </div>`;
+        }).join("");
+        wrap.innerHTML = rows;
+      }
+
+      // ── Fetch & render ───────────────────────────────────────────────────────
+      async function load() {
+        document.getElementById("status").textContent = "Loading...";
+        try {
+          const res  = await fetch("/analysis");
+          const data = await res.json();
+          _rawLog = data.raw_log;
+          _byConc = data.by_concurrent;
+
+          renderTable(_byConc);
+          renderChart(_byConc);
+          renderRaw(_rawLog);
+
+          const n = _rawLog.length;
+          document.getElementById("status").textContent =
+            `${n} sample${n !== 1 ? "s" : ""} collected — last updated ${new Date().toLocaleTimeString()}`;
+        } catch (e) {
+          document.getElementById("status").textContent = `Error: ${e.message}`;
+        }
+      }
+
+      async function clearLog() {
+        await fetch("/analysis/clear", { method: "POST" }).catch(() => {});
+        await load();
+      }
+
+      // Auto-refresh every 3s
+      load();
+      setInterval(load, 3000);
+    </script>
+  </body>
+</html>

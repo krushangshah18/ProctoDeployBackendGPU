@@ -1,0 +1,221 @@
+<!doctype html>
+<html>
+  <head>
+    <title>AI Proctor — Monitor</title>
+    <style>
+      * { box-sizing: border-box; }
+      body {
+        font-family: monospace;
+        background: #0d0d0d;
+        color: #eee;
+        margin: 0;
+        padding: 1rem;
+      }
+      header {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        margin-bottom: 1rem;
+        border-bottom: 1px solid #222;
+        padding-bottom: 0.5rem;
+      }
+      header h1 { margin: 0; font-size: 1.2rem; }
+      #session-count { color: #aaa; font-size: 0.85rem; }
+      #capacity-bar {
+        font-size: 0.8rem;
+        color: #666;
+        margin-top: 0.2rem;
+      }
+      #capacity-bar span { color: #7cf; }
+
+      #grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fill, minmax(640px, 1fr));
+        gap: 1.5rem;
+      }
+
+      .tile {
+        background: #1a1a1a;
+        border: 1px solid #2a2a2a;
+        border-radius: 8px;
+        overflow: hidden;
+      }
+      .tile-header {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        padding: 0.4rem 0.75rem;
+        background: #222;
+        font-size: 0.85rem;
+      }
+      .tile-label { font-weight: bold; color: #7cf; }
+      .tile-state {
+        font-size: 0.75rem;
+        padding: 2px 7px;
+        border-radius: 10px;
+        background: #333;
+        color: #aaa;
+      }
+      .tile-state.connected    { background: #1a4a2a; color: #4c4; }
+      .tile-state.disconnected,
+      .tile-state.failed       { background: #4a1a1a; color: #f66; }
+
+      .tile img {
+        display: block;
+        width: 100%;
+        aspect-ratio: 4/3;
+        object-fit: contain;
+        background: #111;
+      }
+      .tile-stats {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 2px 0.5rem;
+        padding: 0.5rem 0.75rem;
+        font-size: 0.8rem;
+      }
+      .s-label { color: #666; }
+      .s-val   { color: #7cf; font-weight: bold; text-align: right; }
+      .s-val.warn { color: #fc7; }
+      .s-val.bad  { color: #f77; }
+
+      #empty {
+        color: #444;
+        font-size: 1rem;
+        padding: 3rem;
+        text-align: center;
+      }
+    </style>
+  </head>
+  <body>
+    <header>
+      <div>
+        <h1>AI Proctor — Monitor</h1>
+        <div id="capacity-bar">Slots: <span id="cap-active">0</span> / <span id="cap-max">5</span></div>
+      </div>
+      <div style="display:flex; align-items:center; gap:1rem;">
+        <span id="session-count">No active sessions</span>
+        <a href="/analysis/view" style="color:#7cf; font-size:0.8rem; text-decoration:none;">FPS Analysis →</a>
+      </div>
+    </header>
+    <div id="grid"><div id="empty">Waiting for candidates to connect...</div></div>
+
+    <script>
+      const grid    = document.getElementById("grid");
+      const countEl = document.getElementById("session-count");
+      const capActive = document.getElementById("cap-active");
+      const capMax    = document.getElementById("cap-max");
+
+      const tiles = {};  // pc_id → tile element
+
+      function colorClass(value, warnThresh, badThresh, higherIsBad = true) {
+        const n = parseFloat(value);
+        if (isNaN(n)) return "";
+        if (higherIsBad) return n >= badThresh ? "bad" : n >= warnThresh ? "warn" : "";
+        else             return n <= badThresh ? "bad" : n <= warnThresh ? "warn" : "";
+      }
+
+      function buildTile(pc_id, label) {
+        const tile = document.createElement("div");
+        tile.className = "tile";
+        tile.innerHTML = `
+          <div class="tile-header">
+            <span class="tile-label">${label}</span>
+            <span class="tile-state" id="state-${pc_id}">connecting</span>
+          </div>
+          <img id="snap-${pc_id}" src="/snapshot/${pc_id}?t=0" alt="snapshot" />
+          <div class="tile-stats">
+            <span class="s-label">FPS (srv)</span>    <span class="s-val" id="tf-fps-${pc_id}">—</span>
+            <span class="s-label">Jitter</span>       <span class="s-val" id="tf-jit-${pc_id}">—</span>
+            <span class="s-label">Resolution</span>   <span class="s-val" id="tf-res-${pc_id}">—</span>
+            <span class="s-label">Interval</span>     <span class="s-val" id="tf-iv-${pc_id}">—</span>
+            <span class="s-label">Frames</span>       <span class="s-val" id="tf-fr-${pc_id}">—</span>
+            <span class="s-label">Audio pkt/s</span>  <span class="s-val" id="tf-apr-${pc_id}">—</span>
+          </div>
+        `;
+        tiles[pc_id] = tile;
+        return tile;
+      }
+
+      function updateTile(pc_id, s) {
+        const set = (id, val) => {
+          const el = document.getElementById(id);
+          if (el && val != null) el.textContent = val;
+        };
+        const setColor = (id, val, w, b, hib = true) => {
+          const el = document.getElementById(id);
+          if (!el) return;
+          if (val != null) el.textContent = val;
+          el.className = "s-val " + colorClass(parseFloat(val), w, b, hib);
+        };
+
+        const stateEl = document.getElementById(`state-${pc_id}`);
+        if (stateEl) {
+          const st = s.connection_state || "unknown";
+          stateEl.textContent = st;
+          stateEl.className   = "tile-state " + st;
+        }
+
+        setColor(`tf-fps-${pc_id}`, s.fps != null ? `${s.fps} fps` : null, 20, 10, false);
+        setColor(`tf-jit-${pc_id}`, s.jitter_ms != null ? `${s.jitter_ms} ms` : null, 10, 30);
+        set(`tf-res-${pc_id}`,  s.resolution);
+        set(`tf-iv-${pc_id}`,   s.mean_interval_ms != null ? `${s.mean_interval_ms} ms` : null);
+        set(`tf-fr-${pc_id}`,   s.total_frames);
+        set(`tf-apr-${pc_id}`,  s.audio_packet_rate != null ? `${s.audio_packet_rate}/s` : null);
+
+        const img = document.getElementById(`snap-${pc_id}`);
+        if (img) img.src = `/snapshot/${pc_id}?t=${Date.now()}`;
+      }
+
+      async function poll() {
+        let data, cap;
+        try {
+          [data, cap] = await Promise.all([
+            fetch("/stats").then(r => r.json()),
+            fetch("/capacity").then(r => r.json()),
+          ]);
+        } catch (_) { return; }
+
+        // Update capacity bar
+        capActive.textContent = cap.active;
+        capMax.textContent    = cap.max;
+
+        const activeIds = new Set(Object.keys(data));
+
+        // Remove tiles for disconnected sessions
+        for (const pc_id of Object.keys(tiles)) {
+          if (!activeIds.has(pc_id)) {
+            tiles[pc_id].remove();
+            delete tiles[pc_id];
+          }
+        }
+
+        const empty = document.getElementById("empty");
+        if (activeIds.size === 0) {
+          if (!empty) grid.insertAdjacentHTML("beforeend", '<div id="empty">Waiting for candidates to connect...</div>');
+        } else {
+          if (empty) empty.remove();
+          for (const [pc_id, s] of Object.entries(data)) {
+            if (!tiles[pc_id]) grid.appendChild(buildTile(pc_id, s.label || pc_id));
+            updateTile(pc_id, s);
+          }
+        }
+
+        const n = activeIds.size;
+        countEl.textContent = n === 0 ? "No active sessions"
+          : n === 1 ? "1 active session"
+          : `${n} active sessions`;
+      }
+
+      // Poll stats & capacity at 1 s; refresh debug snapshots every 200 ms
+      setInterval(poll, 1000);
+      setInterval(() => {
+        for (const pc_id of Object.keys(tiles)) {
+          const img = document.getElementById(`snap-${pc_id}`);
+          if (img) img.src = `/snapshot/${pc_id}?t=${Date.now()}`;
+        }
+      }, 200);
+      poll();
+    </script>
+  </body>
+</html>
