@@ -216,18 +216,28 @@ class ProctorCoordinator:
         # If ALL face/head/lip detections are disabled for a session, skip
         # FaceMesh + HeadPoseDetector + LipDetector entirely: no thread-pool
         # dispatch, no C++ compute — just an already-resolved future with _NULL_MP.
-        mp_tasks = []
+        mp_tasks  = []
+        mp_needed = 0
         for session, frame in zip(sessions, frames):
             if session.needs_mediapipe():
                 mp_tasks.append(
                     loop.run_in_executor(self._mp_pool, session.run_mediapipe, frame)
                 )
+                mp_needed += 1
             else:
                 f = loop.create_future()
                 f.set_result(_NULL_MP)
                 mp_tasks.append(f)
 
+        mp_t0      = time.perf_counter()
         mp_results = await asyncio.gather(*mp_tasks)
+        if mp_needed > 0:
+            mp_elapsed_ms = (time.perf_counter() - mp_t0) * 1000
+            try:
+                from core.metrics import metrics as _m
+                _m.record_mediapipe_latency(mp_elapsed_ms)
+            except Exception:
+                pass
 
         # 4. Per-user state update — sequential (fast CPU work)
         for session, raw_dets, mp_result, frame, fps in zip(

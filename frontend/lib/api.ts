@@ -25,6 +25,14 @@ export const api = {
   },
 
   // ── WebRTC ───────────────────────────────────────────────────────────────
+  async sendIceCandidate(pcId: string, candidate: RTCIceCandidateInit): Promise<void> {
+    await fetch(`${BASE}/ice-candidate/${pcId}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(candidate),
+    });
+  },
+
   async offer(sdp: string, type: string, detectionConfig?: Partial<DetectionConfig>) {
     const r = await fetch(`${BASE}/offer`, {
       method: "POST",

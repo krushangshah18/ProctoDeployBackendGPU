@@ -238,30 +238,39 @@ export default function CandidatePage() {
       }
 
       // 2. Create peer connection
-      const pc = new RTCPeerConnection();
+      const pc = new RTCPeerConnection({
+        iceServers: [
+          { urls: "stun:stun.l.google.com:19302" },
+          { urls: "stun:stun1.l.google.com:19302" },
+        ],
+      });
       pcRef.current = pc;
 
       stream.getTracks().forEach(t => pc.addTrack(t, stream));
 
+      // Connection state — with 8s grace on disconnected for transient blips
+      let disconnectTimer: ReturnType<typeof setTimeout> | null = null;
       pc.onconnectionstatechange = () => {
-        if (pc.connectionState === "connected") setStatus("connected");
-        if (["failed", "closed", "disconnected"].includes(pc.connectionState)) {
+        const state = pc.connectionState;
+        if (state === "connected") {
+          if (disconnectTimer) { clearTimeout(disconnectTimer); disconnectTimer = null; }
+          setStatus("connected");
+        } else if (state === "disconnected") {
+          // Give ICE 8 seconds to recover before ending the session
+          disconnectTimer = setTimeout(() => {
+            if (pc.connectionState !== "connected") setStatus("ended");
+          }, 8000);
+        } else if (state === "failed" || state === "closed") {
+          if (disconnectTimer) { clearTimeout(disconnectTimer); disconnectTimer = null; }
           setStatus("ended");
         }
       };
 
-      // 3. Create offer & wait for ICE
+      // 3. Create offer immediately — trickle ICE (no wait for gathering)
       const offer = await pc.createOffer();
       await pc.setLocalDescription(offer);
 
-      await new Promise<void>(resolve => {
-        if (pc.iceGatheringState === "complete") { resolve(); return; }
-        pc.addEventListener("icegatheringstatechange", () => {
-          if (pc.iceGatheringState === "complete") resolve();
-        });
-      });
-
-      // 4. Send to server
+      // 4. Send offer to server immediately
       const answer = await api.offer(pc.localDescription!.sdp, pc.localDescription!.type);
 
       if (answer.error) {
@@ -272,7 +281,14 @@ export default function CandidatePage() {
       setLabel(answer.device_label);
       await pc.setRemoteDescription(answer);
 
-      // 5. Connect SSE for real-time alerts
+      // 5. Trickle ICE — send each candidate as it is discovered
+      pc.onicecandidate = ({ candidate }) => {
+        if (candidate) {
+          api.sendIceCandidate(answer.device_id, candidate.toJSON());
+        }
+      };
+
+      // 6. Connect SSE for real-time alerts
       connectSSE(answer.device_id);
 
     } catch (err: unknown) {

@@ -55,8 +55,10 @@ class MetricsCollector:
         self._warnings_total:    int = 0
 
         # ── Inference / tick timing ───────────────────────────────────────────
-        self._yolo_latencies:    deque = deque(maxlen=200)
-        self._tick_latencies:    deque = deque(maxlen=200)
+        self._yolo_latencies:       deque = deque(maxlen=200)
+        self._tick_latencies:       deque = deque(maxlen=200)
+        self._mediapipe_latencies:  deque = deque(maxlen=200)
+        self._audio_latencies:      deque = deque(maxlen=200)
 
         # ── Resource snapshots (updated by background thread) ─────────────────
         self._cpu_percent:       float = 0.0
@@ -112,6 +114,14 @@ class MetricsCollector:
         with self._lock:
             self._tick_latencies.append(ms)
 
+    def record_mediapipe_latency(self, ms: float) -> None:
+        with self._lock:
+            self._mediapipe_latencies.append(ms)
+
+    def record_audio_latency(self, ms: float) -> None:
+        with self._lock:
+            self._audio_latencies.append(ms)
+
     # ── Snapshot ──────────────────────────────────────────────────────────────
 
     def snapshot(self) -> dict[str, Any]:
@@ -135,6 +145,8 @@ class MetricsCollector:
 
             yolo = sorted(self._yolo_latencies)
             tick = sorted(self._tick_latencies)
+            mp   = sorted(self._mediapipe_latencies)
+            aud  = sorted(self._audio_latencies)
 
             gpu_pct = 0.0
             if self._gpu_mem_total_mb > 0:
@@ -178,6 +190,20 @@ class MetricsCollector:
                     "tick_avg_ms"   : round(_mean(tick), 1),
                     "tick_p95_ms"   : round(_pct(tick, 95), 1),
                     "tick_max_ms"   : round(max(tick), 1) if tick else 0.0,
+                },
+
+                "mediapipe": {
+                    "samples"    : len(mp),
+                    "lat_avg_ms" : round(_mean(mp), 1),
+                    "lat_p95_ms" : round(_pct(mp, 95), 1),
+                    "lat_max_ms" : round(max(mp), 1) if mp else 0.0,
+                },
+
+                "audio": {
+                    "samples"    : len(aud),
+                    "lat_avg_ms" : round(_mean(aud), 1),
+                    "lat_p95_ms" : round(_pct(aud, 95), 1),
+                    "lat_max_ms" : round(max(aud), 1) if aud else 0.0,
                 },
 
                 "system": {

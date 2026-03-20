@@ -91,7 +91,7 @@ BOOK_MIN_VOTES   = 10
 EARBUD_MIN_VOTES = 9
 
 # ── Risk Scoring ─────────────────────────────────────────────────────────────
-RISK_SESSION_DURATION_S  = 3600
+RISK_SESSION_DURATION_S  = 300   # 5 minutes max exam duration
 TIMER_FLICKER_GRACE_S    = 1.5
 
 # ── Session Report ────────────────────────────────────────────────────────────

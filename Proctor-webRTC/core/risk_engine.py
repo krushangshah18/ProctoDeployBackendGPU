@@ -163,6 +163,13 @@ class RiskEngine:
 
         if now <= 0.0:
             now = time.time()
+
+        # ── Hard time limit ───────────────────────────────────────────────────
+        if now - self._creation_time >= self._session_duration_s:
+            mins = int(self._session_duration_s // 60)
+            self._terminate(f"Exam time limit reached ({mins} min)")
+            return RiskEvent(key=key, terminated=True,
+                             termination_reason=self._termination_reason)
         prev = self._prev_active.get(key, False)
         self._prev_active[key] = active
 

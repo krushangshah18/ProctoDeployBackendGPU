@@ -1,0 +1,804 @@
+{
+  "config": {
+    "backend_url": "http://localhost:8000",
+    "video_path": "test_video.mp4",
+    "levels": [
+      1,
+      3
+    ],
+    "warmup_s": 10,
+    "steady_s": 30,
+    "timestamp": "2026-03-19T12:26:36.006355"
+  },
+  "system": {
+    "generated_at": "2026-03-19T06:54:39.679277+00:00",
+    "uptime": "00h 09m 25s",
+    "uptime_s": 565.6,
+    "environment": {
+      "python_version": "3.11.14",
+      "platform": "Linux-6.17.0-19-generic-x86_64-with-glibc2.39",
+      "hostname": "krushang",
+      "pid": 23163,
+      "cpu_count": 16,
+      "cpu_phys": 10,
+      "ram_total_gb": 16.5,
+      "ram_avail_gb": 3.0
+    },
+    "gpu": {
+      "cuda_available": false
+    },
+    "detector": {
+      "model_enabled": true,
+      "device": "cpu",
+      "half_precision": false,
+      "cuda_available": false,
+      "mps_available": false,
+      "batch_supported": true,
+      "total_batches": 653,
+      "total_frames": 1021,
+      "last_batch_ms": 274.19
+    },
+    "coordinator": {
+      "enabled": true,
+      "active_sessions": 0,
+      "max_sessions": 40,
+      "tick_rate_target": 10,
+      "last_tick_ms": 0.0,
+      "total_ticks": 5285,
+      "device": "cpu",
+      "device_info": {
+        "device": "cpu",
+        "half_precision": false,
+        "cuda_available": false,
+        "mps_available": false,
+        "batch_supported": true,
+        "total_batches": 653,
+        "total_frames": 1021,
+        "last_batch_ms": 274.19
+      },
+      "tick_avg_ms": 0.0,
+      "tick_p95_ms": 0.0,
+      "tick_max_ms": 0.0
+    },
+    "requests": {
+      "total": 37,
+      "errors": 0,
+      "error_rate_pct": 0.0,
+      "by_endpoint": {
+        "GET /metrics": {
+          "count": 32,
+          "errors": 0,
+          "lat_avg_ms": 0.7,
+          "lat_p50_ms": 0.5,
+          "lat_p95_ms": 1.7,
+          "lat_p99_ms": 2.0
+        },
+        "GET /system/report": {
+          "count": 1,
+          "errors": 0,
+          "lat_avg_ms": 3.8,
+          "lat_p50_ms": 3.8,
+          "lat_p95_ms": 3.8,
+          "lat_p99_ms": 3.8
+        },
+        "POST /offer": {
+          "count": 4,
+          "errors": 0,
+          "lat_avg_ms": 152.7,
+          "lat_p50_ms": 166.0,
+          "lat_p95_ms": 167.8,
+          "lat_p99_ms": 167.9
+        }
+      }
+    },
+    "sessions": {
+      "total_created": 4,
+      "active": 0,
+      "max_concurrent": 40,
+      "active_details": []
+    },
+    "events": {
+      "alerts_total": 9,
+      "warnings_total": 13
+    },
+    "yolo_performance": {
+      "samples": 200,
+      "lat_avg_ms": 239.0,
+      "lat_p95_ms": 286.3,
+      "lat_p99_ms": 310.0,
+      "lat_max_ms": 317.0
+    },
+    "system_resources": {
+      "cpu_percent": 2.9,
+      "mem_rss_mb": 1775.9,
+      "gpu_util_pct": 0.0,
+      "gpu_mem_used_mb": 0.0,
+      "gpu_mem_total_mb": 0.0,
+      "gpu_mem_used_pct": 0.0
+    },
+    "config": {
+      "AUDIO_CHANNELS": 1,
+      "AUDIO_CHUNK_SAMPLES": 512,
+      "AUDIO_SAMPLE_RATE": 16000,
+      "AUDIO_SPEECH_THRESH": 0.5,
+      "BASE_DIR": "/home/krushang/Desktop/GPUNextAndFastApiWithWebRTC/Proctor-webRTC",
+      "BLINK_FRAMES": 2,
+      "BOOK_MIN_VOTES": 10,
+      "COOLDOWN_SECONDS": 3,
+      "DETECT_BOOK": true,
+      "DETECT_EARBUD": true,
+      "DETECT_FACE_HIDDEN": true,
+      "DETECT_FAKE_PRESENCE": true,
+      "DETECT_HEADPHONE": true,
+      "DETECT_LOOKING_AWAY": true,
+      "DETECT_LOOKING_DOWN": true,
+      "DETECT_LOOKING_SIDE": true,
+      "DETECT_LOOKING_UP": true,
+      "DETECT_MULTIPLE_PEOPLE": true,
+      "DETECT_PARTIAL_FACE": true,
+      "DETECT_PHONE": true,
+      "DETECT_SPEAKER_AUDIO": true,
+      "EARBUD_MIN_VOTES": 9,
+      "EAR_THRESHOLD": 0.2,
+      "FAKE_WINDOW": 15.0,
+      "GAZE_LEFT": -0.13,
+      "GAZE_RIGHT": 0.13,
+      "GAZE_THRESHOLD": 1.5,
+      "LIP_DYNAMIC_STD_MIN": 0.01,
+      "LIP_HISTORY": 30,
+      "LIP_MAR_SPEAKING": 0.05,
+      "LIP_MAR_YAWN": 0.22,
+      "LIP_YAWN_DURATION_S": 1.5,
+      "LOOKING_AWAY_THRESHOLD": 2.0,
+      "LOOK_AWAY_YAW": 0.2,
+      "LOOK_DOWN_PITCH": 0.13,
+      "LOOK_UP_PITCH": -0.1,
+      "MAX_SESSIONS": 40,
+      "MIN_FACE_HEIGHT": 95,
+      "MIN_FACE_WIDTH": 80,
+      "MIN_VARIANCE": 0.001,
+      "NO_BLINK_TIMEOUT": 10,
+      "OBJECT_MIN_VOTES": 5,
+      "OBJECT_WINDOW": 15,
+      "PHONE_MIN_VOTES": 9,
+      "PROOF_AUDIO_PRE_S": 5.0,
+      "REPORT_DIR": "reports",
+      "RESET_COOLDOWN_SECONDS": 1,
+      "RISK_SESSION_DURATION_S": 300,
+      "SAMPLE_INTERVAL": 0.2,
+      "SAVE_PROOF": true,
+      "SAVE_REPORT": true,
+      "SPEAKER_HOLD_S": 0.3,
+      "TICK_RATE": 10,
+      "TIMER_FLICKER_GRACE_S": 1.5,
+      "YOLO_AUDIO_CONF": 0.41,
+      "YOLO_BOOK_CONF": 0.7,
+      "YOLO_DEFAULT_CONF": 0.5,
+      "YOLO_DEVICE": "auto",
+      "YOLO_HALF": true,
+      "YOLO_MIN_VRAM_GB": 2.0,
+      "YOLO_MODEL_PATH": "/home/krushang/Desktop/GPUNextAndFastApiWithWebRTC/Proctor-webRTC/finalBestV5.pt",
+      "YOLO_PERSON_CONF": 0.3,
+      "YOLO_PHONE_CONF": 0.65,
+      "YOLO_WARMUP_FRAMES": 3
+    }
+  },
+  "levels": [
+    {
+      "n_clients": 1,
+      "connected": 1,
+      "connect_ms": {
+        "avg": 116.3,
+        "p50": 116.3,
+        "p95": 116.3,
+        "p99": 116.3,
+        "max": 116.3,
+        "min": 116.3
+      },
+      "tick_ms": {
+        "avg": 90.54,
+        "p50": 82.45,
+        "p95": 201.6,
+        "p99": 201.6,
+        "max": 201.6,
+        "min": 67.47
+      },
+      "yolo_avg_ms": {
+        "avg": 86.37,
+        "p50": 85.6,
+        "p95": 99.8,
+        "p99": 99.8,
+        "max": 99.8,
+        "min": 84.0
+      },
+      "yolo_p95_ms": {
+        "avg": 130.35,
+        "p50": 123.7,
+        "p95": 246.2,
+        "p99": 246.2,
+        "max": 246.2,
+        "min": 116.2
+      },
+      "cpu_pct": {
+        "avg": 27.65,
+        "p50": 26.8,
+        "p95": 29.9,
+        "p99": 29.9,
+        "max": 29.9,
+        "min": 25.8
+      },
+      "ram_mb": {
+        "avg": 1759.13,
+        "p50": 1758.1,
+        "p95": 1763.5,
+        "p99": 1763.5,
+        "max": 1763.5,
+        "min": 1758.0
+      },
+      "gpu_util_pct": {
+        "avg": 0.0,
+        "p50": 0.0,
+        "p95": 0.0,
+        "p99": 0.0,
+        "max": 0.0,
+        "min": 0.0
+      },
+      "vram_mb": {
+        "avg": 0.0,
+        "p50": 0.0,
+        "p95": 0.0,
+        "p99": 0.0,
+        "max": 0.0,
+        "min": 0.0
+      },
+      "tick_ok_pct": 80.0,
+      "effective_hz": 11.04,
+      "samples": 15,
+      "snapshots": [
+        {
+          "t": 1773903299.6843126,
+          "sessions": 1,
+          "tick_ms": 82.45,
+          "tick_avg_ms": 86.6,
+          "tick_p95_ms": 131.6,
+          "yolo_avg_ms": 99.8,
+          "yolo_p95_ms": 246.2,
+          "yolo_p99_ms": 310.0,
+          "cpu_pct": 29.9,
+          "ram_mb": 1758.1,
+          "gpu_util": 0.0,
+          "vram_mb": 0.0
+        },
+        {
+          "t": 1773903301.6872077,
+          "sessions": 1,
+          "tick_ms": 102.13,
+          "tick_avg_ms": 93.8,
+          "tick_p95_ms": 133.1,
+          "yolo_avg_ms": 85.7,
+          "yolo_p95_ms": 123.3,
+          "yolo_p99_ms": 143.4,
+          "cpu_pct": 29.9,
+          "ram_mb": 1758.1,
+          "gpu_util": 0.0,
+          "vram_mb": 0.0
+        },
+        {
+          "t": 1773903303.6901255,
+          "sessions": 1,
+          "tick_ms": 82.15,
+          "tick_avg_ms": 93.9,
+          "tick_p95_ms": 133.1,
+          "yolo_avg_ms": 85.8,
+          "yolo_p95_ms": 124.1,
+          "yolo_p99_ms": 143.4,
+          "cpu_pct": 29.9,
+          "ram_mb": 1758.1,
+          "gpu_util": 0.0,
+          "vram_mb": 0.0
+        },
+        {
+          "t": 1773903305.6917548,
+          "sessions": 1,
+          "tick_ms": 101.5,
+          "tick_avg_ms": 94.6,
+          "tick_p95_ms": 133.6,
+          "yolo_avg_ms": 86.5,
+          "yolo_p95_ms": 125.3,
+          "yolo_p99_ms": 145.6,
+          "cpu_pct": 28.2,
+          "ram_mb": 1758.1,
+          "gpu_util": 0.0,
+          "vram_mb": 0.0
+        },
+        {
+          "t": 1773903307.6945639,
+          "sessions": 1,
+          "tick_ms": 67.47,
+          "tick_avg_ms": 93.7,
+          "tick_p95_ms": 132.2,
+          "yolo_avg_ms": 85.6,
+          "yolo_p95_ms": 123.7,
+          "yolo_p99_ms": 145.6,
+          "cpu_pct": 28.2,
+          "ram_mb": 1758.1,
+          "gpu_util": 0.0,
+          "vram_mb": 0.0
+        },
+        {
+          "t": 1773903309.6972914,
+          "sessions": 1,
+          "tick_ms": 73.83,
+          "tick_avg_ms": 93.6,
+          "tick_p95_ms": 132.2,
+          "yolo_avg_ms": 85.6,
+          "yolo_p95_ms": 123.7,
+          "yolo_p99_ms": 145.6,
+          "cpu_pct": 26.8,
+          "ram_mb": 1763.5,
+          "gpu_util": 0.0,
+          "vram_mb": 0.0
+        },
+        {
+          "t": 1773903311.701003,
+          "sessions": 1,
+          "tick_ms": 68.1,
+          "tick_avg_ms": 94.3,
+          "tick_p95_ms": 132.2,
+          "yolo_avg_ms": 86.3,
+          "yolo_p95_ms": 123.7,
+          "yolo_p99_ms": 145.6,
+          "cpu_pct": 26.8,
+          "ram_mb": 1763.5,
+          "gpu_util": 0.0,
+          "vram_mb": 0.0
+        },
+        {
+          "t": 1773903313.7062666,
+          "sessions": 1,
+          "tick_ms": 87.48,
+          "tick_avg_ms": 94.9,
+          "tick_p95_ms": 132.2,
+          "yolo_avg_ms": 86.8,
+          "yolo_p95_ms": 123.7,
+          "yolo_p99_ms": 146.0,
+          "cpu_pct": 26.8,
+          "ram_mb": 1763.5,
+          "gpu_util": 0.0,
+          "vram_mb": 0.0
+        },
+        {
+          "t": 1773903315.7098842,
+          "sessions": 1,
+          "tick_ms": 72.46,
+          "tick_avg_ms": 93.9,
+          "tick_p95_ms": 130.7,
+          "yolo_avg_ms": 85.7,
+          "yolo_p95_ms": 123.0,
+          "yolo_p99_ms": 146.0,
+          "cpu_pct": 28.6,
+          "ram_mb": 1758.0,
+          "gpu_util": 0.0,
+          "vram_mb": 0.0
+        },
+        {
+          "t": 1773903317.711725,
+          "sessions": 1,
+          "tick_ms": 75.48,
+          "tick_avg_ms": 93.8,
+          "tick_p95_ms": 131.7,
+          "yolo_avg_ms": 85.6,
+          "yolo_p95_ms": 123.7,
+          "yolo_p99_ms": 146.0,
+          "cpu_pct": 28.6,
+          "ram_mb": 1758.0,
+          "gpu_util": 0.0,
+          "vram_mb": 0.0
+        },
+        {
+          "t": 1773903319.7150786,
+          "sessions": 1,
+          "tick_ms": 83.27,
+          "tick_avg_ms": 93.2,
+          "tick_p95_ms": 130.4,
+          "yolo_avg_ms": 85.1,
+          "yolo_p95_ms": 122.3,
+          "yolo_p99_ms": 140.5,
+          "cpu_pct": 26.5,
+          "ram_mb": 1758.0,
+          "gpu_util": 0.0,
+          "vram_mb": 0.0
+        },
+        {
+          "t": 1773903321.7173955,
+          "sessions": 1,
+          "tick_ms": 201.6,
+          "tick_avg_ms": 92.7,
+          "tick_p95_ms": 129.8,
+          "yolo_avg_ms": 84.7,
+          "yolo_p95_ms": 121.0,
+          "yolo_p99_ms": 140.5,
+          "cpu_pct": 26.5,
+          "ram_mb": 1758.0,
+          "gpu_util": 0.0,
+          "vram_mb": 0.0
+        },
+        {
+          "t": 1773903323.7214265,
+          "sessions": 1,
+          "tick_ms": 96.08,
+          "tick_avg_ms": 92.3,
+          "tick_p95_ms": 128.9,
+          "yolo_avg_ms": 84.2,
+          "yolo_p95_ms": 119.1,
+          "yolo_p99_ms": 140.5,
+          "cpu_pct": 26.5,
+          "ram_mb": 1758.0,
+          "gpu_util": 0.0,
+          "vram_mb": 0.0
+        },
+        {
+          "t": 1773903325.7254496,
+          "sessions": 1,
+          "tick_ms": 90.05,
+          "tick_avg_ms": 92.1,
+          "tick_p95_ms": 126.1,
+          "yolo_avg_ms": 84.0,
+          "yolo_p95_ms": 116.3,
+          "yolo_p99_ms": 131.6,
+          "cpu_pct": 25.8,
+          "ram_mb": 1758.0,
+          "gpu_util": 0.0,
+          "vram_mb": 0.0
+        },
+        {
+          "t": 1773903327.7284787,
+          "sessions": 1,
+          "tick_ms": 73.99,
+          "tick_avg_ms": 92.3,
+          "tick_p95_ms": 125.9,
+          "yolo_avg_ms": 84.2,
+          "yolo_p95_ms": 116.2,
+          "yolo_p99_ms": 131.5,
+          "cpu_pct": 25.8,
+          "ram_mb": 1758.0,
+          "gpu_util": 0.0,
+          "vram_mb": 0.0
+        }
+      ]
+    },
+    {
+      "n_clients": 3,
+      "connected": 3,
+      "connect_ms": {
+        "avg": 218.53,
+        "p50": 216.1,
+        "p95": 248.7,
+        "p99": 248.7,
+        "max": 248.7,
+        "min": 190.8
+      },
+      "tick_ms": {
+        "avg": 267.68,
+        "p50": 262.98,
+        "p95": 360.75,
+        "p99": 360.75,
+        "max": 360.75,
+        "min": 237.89
+      },
+      "yolo_avg_ms": {
+        "avg": 188.86,
+        "p50": 188.9,
+        "p95": 232.1,
+        "p99": 232.1,
+        "max": 232.1,
+        "min": 145.0
+      },
+      "yolo_p95_ms": {
+        "avg": 284.4,
+        "p50": 283.3,
+        "p95": 288.9,
+        "p99": 288.9,
+        "max": 288.9,
+        "min": 274.6
+      },
+      "cpu_pct": {
+        "avg": 35.89,
+        "p50": 35.7,
+        "p95": 37.2,
+        "p99": 37.2,
+        "max": 37.2,
+        "min": 35.0
+      },
+      "ram_mb": {
+        "avg": 1891.63,
+        "p50": 1888.0,
+        "p95": 1938.0,
+        "p99": 1938.0,
+        "max": 1938.0,
+        "min": 1852.7
+      },
+      "gpu_util_pct": {
+        "avg": 0.0,
+        "p50": 0.0,
+        "p95": 0.0,
+        "p99": 0.0,
+        "max": 0.0,
+        "min": 0.0
+      },
+      "vram_mb": {
+        "avg": 0.0,
+        "p50": 0.0,
+        "p95": 0.0,
+        "p99": 0.0,
+        "max": 0.0,
+        "min": 0.0
+      },
+      "tick_ok_pct": 0.0,
+      "effective_hz": 3.74,
+      "samples": 15,
+      "snapshots": [
+        {
+          "t": 1773903357.781881,
+          "sessions": 3,
+          "tick_ms": 248.07,
+          "tick_avg_ms": 118.6,
+          "tick_p95_ms": 298.6,
+          "yolo_avg_ms": 145.0,
+          "yolo_p95_ms": 274.6,
+          "yolo_p99_ms": 305.7,
+          "cpu_pct": 35.6,
+          "ram_mb": 1930.7,
+          "gpu_util": 0.0,
+          "vram_mb": 0.0
+        },
+        {
+          "t": 1773903359.783512,
+          "sessions": 3,
+          "tick_ms": 262.98,
+          "tick_avg_ms": 125.0,
+          "tick_p95_ms": 298.6,
+          "yolo_avg_ms": 151.5,
+          "yolo_p95_ms": 279.6,
+          "yolo_p99_ms": 305.7,
+          "cpu_pct": 35.7,
+          "ram_mb": 1938.0,
+          "gpu_util": 0.0,
+          "vram_mb": 0.0
+        },
+        {
+          "t": 1773903361.8236678,
+          "sessions": 3,
+          "tick_ms": 360.75,
+          "tick_avg_ms": 132.5,
+          "tick_p95_ms": 308.7,
+          "yolo_avg_ms": 157.9,
+          "yolo_p95_ms": 282.4,
+          "yolo_p99_ms": 305.7,
+          "cpu_pct": 35.7,
+          "ram_mb": 1938.0,
+          "gpu_util": 0.0,
+          "vram_mb": 0.0
+        },
+        {
+          "t": 1773903363.8266742,
+          "sessions": 3,
+          "tick_ms": 250.6,
+          "tick_avg_ms": 137.8,
+          "tick_p95_ms": 308.7,
+          "yolo_avg_ms": 163.9,
+          "yolo_p95_ms": 282.4,
+          "yolo_p99_ms": 305.7,
+          "cpu_pct": 35.7,
+          "ram_mb": 1938.0,
+          "gpu_util": 0.0,
+          "vram_mb": 0.0
+        },
+        {
+          "t": 1773903365.8289986,
+          "sessions": 3,
+          "tick_ms": 240.04,
+          "tick_avg_ms": 144.4,
+          "tick_p95_ms": 308.7,
+          "yolo_avg_ms": 169.4,
+          "yolo_p95_ms": 282.4,
+          "yolo_p99_ms": 305.7,
+          "cpu_pct": 35.0,
+          "ram_mb": 1856.1,
+          "gpu_util": 0.0,
+          "vram_mb": 0.0
+        },
+        {
+          "t": 1773903367.8310213,
+          "sessions": 3,
+          "tick_ms": 274.12,
+          "tick_avg_ms": 150.8,
+          "tick_p95_ms": 310.8,
+          "yolo_avg_ms": 175.5,
+          "yolo_p95_ms": 282.4,
+          "yolo_p99_ms": 305.7,
+          "cpu_pct": 35.0,
+          "ram_mb": 1856.1,
+          "gpu_util": 0.0,
+          "vram_mb": 0.0
+        },
+        {
+          "t": 1773903369.833268,
+          "sessions": 3,
+          "tick_ms": 237.89,
+          "tick_avg_ms": 157.6,
+          "tick_p95_ms": 310.8,
+          "yolo_avg_ms": 182.2,
+          "yolo_p95_ms": 282.4,
+          "yolo_p99_ms": 305.7,
+          "cpu_pct": 36.0,
+          "ram_mb": 1892.1,
+          "gpu_util": 0.0,
+          "vram_mb": 0.0
+        },
+        {
+          "t": 1773903371.8352187,
+          "sessions": 3,
+          "tick_ms": 275.12,
+          "tick_avg_ms": 167.4,
+          "tick_p95_ms": 310.8,
+          "yolo_avg_ms": 188.9,
+          "yolo_p95_ms": 283.3,
+          "yolo_p99_ms": 305.7,
+          "cpu_pct": 36.0,
+          "ram_mb": 1892.1,
+          "gpu_util": 0.0,
+          "vram_mb": 0.0
+        },
+        {
+          "t": 1773903373.8390706,
+          "sessions": 3,
+          "tick_ms": 280.0,
+          "tick_avg_ms": 177.6,
+          "tick_p95_ms": 313.2,
+          "yolo_avg_ms": 195.2,
+          "yolo_p95_ms": 285.8,
+          "yolo_p99_ms": 305.7,
+          "cpu_pct": 36.0,
+          "ram_mb": 1892.1,
+          "gpu_util": 0.0,
+          "vram_mb": 0.0
+        },
+        {
+          "t": 1773903375.842955,
+          "sessions": 3,
+          "tick_ms": 281.66,
+          "tick_avg_ms": 187.3,
+          "tick_p95_ms": 313.2,
+          "yolo_avg_ms": 201.7,
+          "yolo_p95_ms": 288.0,
+          "yolo_p99_ms": 305.7,
+          "cpu_pct": 37.2,
+          "ram_mb": 1852.7,
+          "gpu_util": 0.0,
+          "vram_mb": 0.0
+        },
+        {
+          "t": 1773903377.8493607,
+          "sessions": 3,
+          "tick_ms": 274.27,
+          "tick_avg_ms": 197.8,
+          "tick_p95_ms": 313.2,
+          "yolo_avg_ms": 208.4,
+          "yolo_p95_ms": 288.0,
+          "yolo_p99_ms": 305.7,
+          "cpu_pct": 37.2,
+          "ram_mb": 1852.7,
+          "gpu_util": 0.0,
+          "vram_mb": 0.0
+        },
+        {
+          "t": 1773903379.851718,
+          "sessions": 3,
+          "tick_ms": 244.52,
+          "tick_avg_ms": 207.6,
+          "tick_p95_ms": 317.3,
+          "yolo_avg_ms": 214.2,
+          "yolo_p95_ms": 288.0,
+          "yolo_p99_ms": 305.7,
+          "cpu_pct": 35.5,
+          "ram_mb": 1888.0,
+          "gpu_util": 0.0,
+          "vram_mb": 0.0
+        },
+        {
+          "t": 1773903381.854597,
+          "sessions": 3,
+          "tick_ms": 242.28,
+          "tick_avg_ms": 217.1,
+          "tick_p95_ms": 318.4,
+          "yolo_avg_ms": 220.4,
+          "yolo_p95_ms": 288.9,
+          "yolo_p99_ms": 305.7,
+          "cpu_pct": 35.5,
+          "ram_mb": 1888.0,
+          "gpu_util": 0.0,
+          "vram_mb": 0.0
+        },
+        {
+          "t": 1773903383.8571284,
+          "sessions": 3,
+          "tick_ms": 282.48,
+          "tick_avg_ms": 227.4,
+          "tick_p95_ms": 318.4,
+          "yolo_avg_ms": 226.6,
+          "yolo_p95_ms": 288.9,
+          "yolo_p99_ms": 305.7,
+          "cpu_pct": 35.5,
+          "ram_mb": 1888.0,
+          "gpu_util": 0.0,
+          "vram_mb": 0.0
+        },
+        {
+          "t": 1773903385.8600035,
+          "sessions": 3,
+          "tick_ms": 260.39,
+          "tick_avg_ms": 237.1,
+          "tick_p95_ms": 318.9,
+          "yolo_avg_ms": 232.1,
+          "yolo_p95_ms": 288.9,
+          "yolo_p99_ms": 305.7,
+          "cpu_pct": 36.8,
+          "ram_mb": 1871.8,
+          "gpu_util": 0.0,
+          "vram_mb": 0.0
+        }
+      ]
+    }
+  ],
+  "bottleneck": {
+    "bottleneck": "tick",
+    "max_safe": 0,
+    "analysis": {
+      "cpu": {
+        "values": {
+          "1": 27.65,
+          "3": 35.89
+        },
+        "saturates_at": null,
+        "threshold": 85,
+        "unit": "%"
+      },
+      "tick": {
+        "values": {
+          "1": 80.0,
+          "3": 0.0
+        },
+        "saturates_at": 1,
+        "threshold": 95,
+        "unit": "% ok"
+      },
+      "yolo": {
+        "values": {
+          "1": 86.37,
+          "3": 188.86
+        },
+        "saturates_at": 3,
+        "threshold": 200,
+        "unit": "ms"
+      },
+      "ram": {
+        "values": {
+          "1": 1759.13,
+          "3": 1891.63
+        },
+        "saturates_at": null,
+        "unit": "MB"
+      },
+      "gpu": {
+        "values": {
+          "1": 0.0,
+          "3": 0.0
+        },
+        "saturates_at": null,
+        "threshold": 85,
+        "unit": "%"
+      }
+    }
+  }
+}

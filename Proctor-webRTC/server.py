@@ -20,7 +20,15 @@ from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse, Response, StreamingResponse
 from starlette.middleware.base import BaseHTTPMiddleware
-from aiortc import RTCPeerConnection, RTCSessionDescription, MediaStreamTrack
+from aiortc import RTCPeerConnection, RTCSessionDescription, RTCConfiguration, RTCIceServer, MediaStreamTrack, RTCRtpReceiver
+
+# STUN: helps the server discover its public IP when deployed on EC2/cloud.
+# On localhost both sides are 127.0.0.1 so STUN is a no-op but harmless.
+# TURN is NOT needed — on EC2 UDP ports are open in the security group.
+_ICE_SERVERS = RTCConfiguration(iceServers=[
+    RTCIceServer(urls=["stun:stun.l.google.com:19302"]),
+    RTCIceServer(urls=["stun:stun1.l.google.com:19302"]),
+])
 
 MODEL_ENABLED = True
 
@@ -128,11 +136,23 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+
+# ── Global exception handler — ensures CORS headers on 500 errors ────────────
+@app.exception_handler(Exception)
+async def _unhandled_exception_handler(request: Request, exc: Exception):
+    logger.exception("Unhandled exception on %s %s", request.method, request.url.path)
+    return JSONResponse(
+        status_code=500,
+        content={"detail": str(exc)},
+        headers={"Access-Control-Allow-Origin": "*"},
+    )
+
 pcs: set = set()
 stream_stats: dict[str, dict] = {}
 snapshots:    dict[str, bytes] = {}
 fps_log:      list[dict]       = []
 _device_counter = 0
+_pcs_by_id: dict[str, RTCPeerConnection] = {}   # pc_id → pc (for trickle ICE)
 
 
 # ── Tracks ────────────────────────────────────────────────────────────────────
@@ -180,7 +200,12 @@ class VideoAnalyzerTrack(MediaStreamTrack):
         else:
             self.stats["total_frames"] = self.stats.get("total_frames", 0) + 1
 
-        img = frame.to_ndarray(format="bgr24")
+        try:
+            img = frame.to_ndarray(format="bgr24")
+            img = np.ascontiguousarray(img)
+        except Exception as exc:
+            logger.debug("[%s] frame decode error (skipping frame): %s", self.pc_id, exc)
+            return frame  # keep latest_frame at last good value
 
         # Encode raw JPEG snapshot at ~5 Hz for admin live-view
         if now - self._last_snapshot >= 0.2:
@@ -604,6 +629,87 @@ async def analysis():
 
 # ── WebRTC offer ──────────────────────────────────────────────────────────────
 
+def _strip_rtx_from_sdp(sdp_str: str) -> str:
+    """
+    Remove all video/rtx payload-type references from an SDP string.
+
+    Why: aiortc's codecs module has no handler for 'video/rtx'.  When the
+    browser negotiates RTX (RTP retransmission, RFC 4588) alongside VP8,
+    aiortc still accepts it and eventually starts a decoder_worker thread for
+    the RTX payload type.  That thread crashes immediately:
+        ValueError: No decoder found for MIME type `video/rtx`
+    The crash kills the video-decoder thread, recv() blocks forever, and the
+    frame feed freezes.
+
+    Stripping RTX from the offer before setRemoteDescription means aiortc
+    never creates RTX receivers, the answer SDP omits RTX, and the browser
+    stops sending RTX packets — so the decoder thread is never triggered.
+    """
+    sep   = "\r\n" if "\r\n" in sdp_str else "\n"
+    lines = sdp_str.split(sep)
+
+    # Pass 1 — collect RTX payload types  (e.g. "a=rtpmap:97 rtx/90000")
+    rtx_pts: set[str] = set()
+    for line in lines:
+        if line.startswith("a=rtpmap:"):
+            rest = line[len("a=rtpmap:"):]
+            pt, _, codec = rest.partition(" ")
+            if codec.lower().startswith("rtx/"):
+                rtx_pts.add(pt.strip())
+
+    if not rtx_pts:
+        return sdp_str   # nothing to strip
+
+    logger.debug("Stripping RTX payload types from offer SDP: %s", rtx_pts)
+
+    # Pass 2 — drop lines that reference RTX PTs, rewrite m= lines
+    out: list[str] = []
+    for line in lines:
+        # Drop rtpmap / fmtp / rtcp-fb lines for RTX PTs
+        if any(
+            line.startswith(f"a=rtpmap:{pt} ")
+            or line.startswith(f"a=fmtp:{pt} ")
+            or line.startswith(f"a=rtcp-fb:{pt} ")
+            for pt in rtx_pts
+        ):
+            continue
+        # Rewrite "m=video ... PT1 PT2 PT3" to remove RTX PTs
+        if line.startswith("m="):
+            parts = line.split()
+            kept  = [p for p in parts[3:] if p not in rtx_pts]
+            out.append(" ".join(parts[:3] + kept))
+        else:
+            out.append(line)
+
+    return sep.join(out)
+
+
+@app.post("/ice-candidate/{pc_id}")
+async def add_ice_candidate(pc_id: str, request: Request):
+    """Receive a trickle ICE candidate from the browser and add it to the peer connection."""
+    pc = _pcs_by_id.get(pc_id)
+    if pc is None:
+        raise HTTPException(status_code=404, detail="Session not found")
+
+    params = await request.json()
+    candidate_str = params.get("candidate", "")
+    if not candidate_str:
+        return {"ok": True}   # end-of-candidates signal — nothing to do
+
+    try:
+        from aiortc.sdp import candidate_from_sdp
+        # Browser sends "candidate:..." — strip the prefix for the parser
+        sdp_value = candidate_str[len("candidate:"):] if candidate_str.startswith("candidate:") else candidate_str
+        ice_candidate = candidate_from_sdp(sdp_value)
+        ice_candidate.sdpMid       = params.get("sdpMid")
+        ice_candidate.sdpMLineIndex = params.get("sdpMLineIndex", 0)
+        await pc.addIceCandidate(ice_candidate)
+    except Exception as exc:
+        logger.warning("Failed to add ICE candidate for %s: %s", pc_id, exc)
+
+    return {"ok": True}
+
+
 @app.post("/offer")
 async def offer(request: Request):
     if len(pcs) >= MAX_CONNECTIONS:
@@ -616,15 +722,20 @@ async def offer(request: Request):
     _device_counter += 1
     device_label = f"Candidate_{_device_counter}"
 
-    params    = await request.json()
-    offer_sdp = RTCSessionDescription(sdp=params["sdp"], type=params["type"])
+    params = await request.json()
+    # Strip video/rtx before aiortc sees the offer — prevents the decoder_worker
+    # thread from crashing on "No decoder found for MIME type `video/rtx`" which
+    # kills all video decoding and freezes the frame feed.
+    clean_sdp = _strip_rtx_from_sdp(params["sdp"])
+    offer_sdp = RTCSessionDescription(sdp=clean_sdp, type=params["type"])
 
     # Per-session detection overrides (from exam-level config set by admin)
     detection_override = params.get("detection_config", {})
 
-    pc    = RTCPeerConnection()
+    pc    = RTCPeerConnection(configuration=_ICE_SERVERS)
     pc_id = str(id(pc))
     pcs.add(pc)
+    _pcs_by_id[pc_id] = pc
     stream_stats[pc_id] = {"label": device_label, "connection_state": "new"}
     _metrics.inc_session()
 
@@ -656,21 +767,80 @@ async def offer(request: Request):
                 track, pc_id, stream_stats[pc_id], device_label, session=session,
             )
             async def _video_loop():
+                """
+                Uses asyncio.wait() — NOT asyncio.wait_for() — so a stalled aiortc
+                jitter-buffer never silently blocks this loop.
+                asyncio.wait_for cancels the recv() task and corrupts aiortc internal
+                jitter state; asyncio.wait simply returns after the timeout leaving the
+                task alive so we can keep waiting on it without any corruption.
+                """
+                recv_task  = asyncio.ensure_future(video_track.recv())
+                stall_n    = 0
+
                 while True:
-                    try:
-                        await video_track.recv()
-                    except Exception:
-                        break
+                    done, _ = await asyncio.wait({recv_task}, timeout=10.0)
+
+                    if recv_task in done:
+                        stall_n = 0
+                        exc = recv_task.exception()
+                        if exc is not None:
+                            exc_name = type(exc).__name__
+                            if exc_name == "MediaStreamError" or "ended" in str(exc).lower():
+                                logger.info("[%s] video track ended: %s", device_label, exc)
+                                break
+                            logger.warning("[%s] video recv error (%s): %s",
+                                           device_label, exc_name, exc)
+                            await asyncio.sleep(0.033)
+                        recv_task = asyncio.ensure_future(video_track.recv())
+
+                    else:
+                        stall_n += 1
+                        logger.warning(
+                            "[%s] video recv stalled >%ds (stall #%d) — "
+                            "pc_state=%s  track_ready=%s",
+                            device_label, 10 * stall_n, stall_n,
+                            pc.connectionState,
+                            getattr(video_track.track, "readyState", "?"),
+                        )
+                        # Send RTCP PLI to browser — requests a fresh keyframe which
+                        # can unblock the jitter buffer.  The task stays alive (no cancel).
+                        try:
+                            for _t in pc.getTransceivers():
+                                if _t.kind == "video":
+                                    _r    = _t.receiver
+                                    _pfn  = getattr(_r, "_send_pli", None) \
+                                            or getattr(_r, "send_pli", None)
+                                    if _pfn:
+                                        asyncio.ensure_future(_pfn())
+                        except Exception:
+                            pass
+                        # Keep waiting on the same recv_task — do NOT cancel it
+
+                logger.info("[%s] _video_loop exited", device_label)
             asyncio.ensure_future(_video_loop())
 
         elif track.kind == "audio":
             audio_track = AudioAnalyzerTrack(track, stream_stats[pc_id], session=session)
             async def _audio_loop():
+                recv_task = asyncio.ensure_future(audio_track.recv())
                 while True:
-                    try:
-                        await audio_track.recv()
-                    except Exception:
-                        break
+                    done, _ = await asyncio.wait({recv_task}, timeout=15.0)
+                    if recv_task in done:
+                        exc = recv_task.exception()
+                        if exc is not None:
+                            exc_name = type(exc).__name__
+                            if exc_name == "MediaStreamError" or "ended" in str(exc).lower():
+                                logger.info("[%s] audio track ended: %s", device_label, exc)
+                                break
+                            logger.warning("[%s] audio recv error (%s): %s",
+                                           device_label, exc_name, exc)
+                            await asyncio.sleep(0.033)
+                        recv_task = asyncio.ensure_future(audio_track.recv())
+                    else:
+                        logger.debug("[%s] audio recv stalled >15s — pc_state=%s",
+                                     device_label, pc.connectionState)
+                        # Keep waiting on same task
+                logger.info("[%s] _audio_loop exited", device_label)
             asyncio.ensure_future(_audio_loop())
 
     @pc.on("connectionstatechange")
@@ -686,10 +856,30 @@ async def offer(request: Request):
             stream_stats.pop(pc_id, None)
             snapshots.pop(pc_id, None)
             pcs.discard(pc)
+            _pcs_by_id.pop(pc_id, None)
             _metrics.dec_session()
             logger.info("[%s] ended — %d/%d slots", device_label, len(pcs), MAX_CONNECTIONS)
 
     await pc.setRemoteDescription(offer_sdp)
+
+    # Force VP8 — aiortc's native codec, far more resilient to packet loss than
+    # H.264 on internet paths.  H.264 P-frames create long dependency chains: one
+    # lost UDP packet corrupts all subsequent frames until the next I-frame and
+    # can stall the aiortc jitter buffer indefinitely.  VP8 has no such chain.
+    try:
+        capabilities = RTCRtpReceiver.getCapabilities("video")
+        if capabilities:
+            vp8_codecs = [c for c in capabilities.codecs
+                          if c.mimeType.lower() == "video/vp8"]
+            if vp8_codecs:
+                for transceiver in pc.getTransceivers():
+                    if transceiver.kind == "video":
+                        transceiver.setCodecPreferences(vp8_codecs)
+                        logger.info("[%s] codec forced to VP8", device_label)
+    except Exception as exc:
+        logger.warning("[%s] VP8 codec preference failed (falling back): %s",
+                       device_label, exc)
+
     answer = await pc.createAnswer()
     await pc.setLocalDescription(answer)
 

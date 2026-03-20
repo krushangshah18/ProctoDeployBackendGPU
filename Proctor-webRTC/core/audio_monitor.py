@@ -112,7 +112,14 @@ class AudioMonitor:
                 ts     = _time.time()
                 pcm    = np.frombuffer(data, dtype=np.int16).astype(np.float32) / 32768.0
                 tensor = torch.from_numpy(pcm)
+                t_vad  = _time.perf_counter()
                 prob   = self._model(tensor, self.sample_rate).item()
+                vad_ms = (_time.perf_counter() - t_vad) * 1000
+                try:
+                    from core.metrics import metrics as _m
+                    _m.record_audio_latency(vad_ms)
+                except Exception:
+                    pass
                 with self._lock:
                     self._speech_detected = prob >= self.speech_threshold
                     self._audio_ring.append((ts, data))
@@ -169,7 +176,14 @@ class AudioMonitor:
                         pcm_buffer = pcm_buffer[self.chunk_samples:]
                         try:
                             tensor = torch.from_numpy(window)
+                            t_vad  = _time.perf_counter()
                             prob   = self._model(tensor, self.sample_rate).item()
+                            vad_ms = (_time.perf_counter() - t_vad) * 1000
+                            try:
+                                from core.metrics import metrics as _m
+                                _m.record_audio_latency(vad_ms)
+                            except Exception:
+                                pass
                             with self._lock:
                                 self._speech_detected = prob >= self.speech_threshold
                         except Exception as exc:

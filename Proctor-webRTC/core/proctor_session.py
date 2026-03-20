@@ -61,7 +61,7 @@ _DEFAULTS = {
         "earbud":     0.50,
         "default":    0.55,
     },
-    "RISK_SESSION_DURATION_S" : 3600,
+    "RISK_SESSION_DURATION_S" : 300,
     "TIMER_FLICKER_GRACE_S"   : 1.5,
     "SAVE_PROOF"              : True,
     "SAVE_REPORT"             : True,

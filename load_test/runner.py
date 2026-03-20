@@ -61,14 +61,14 @@ async def _poll_metrics(
 
                         snap = {
                             "t":           time.time(),
-                            "sessions":    coord.get("active_sessions", 0),
-                            "tick_ms":     coord.get("last_tick_ms",    0.0),
-                            "yolo_avg_ms": yolo.get("avg_ms",           0.0),
-                            "yolo_p95_ms": yolo.get("p95_ms",           0.0),
-                            "cpu_pct":     sys_.get("cpu_pct",          0.0),
-                            "ram_mb":      sys_.get("ram_mb",           0.0),
-                            "gpu_util":    sys_.get("gpu_util_pct",     None),
-                            "vram_mb":     sys_.get("vram_alloc_mb",    None),
+                            "sessions":    coord.get("active_sessions",  0),
+                            "tick_ms":     coord.get("last_tick_ms",     0.0),
+                            "yolo_avg_ms": yolo.get("lat_avg_ms",        0.0),
+                            "yolo_p95_ms": yolo.get("lat_p95_ms",        0.0),
+                            "cpu_pct":     sys_.get("cpu_percent",       0.0),
+                            "ram_mb":      sys_.get("mem_rss_mb",        0.0),
+                            "gpu_util":    sys_.get("gpu_util_pct",      None),
+                            "vram_mb":     sys_.get("gpu_mem_used_mb",   None),
                         }
                         snapshots.append(snap)
 
