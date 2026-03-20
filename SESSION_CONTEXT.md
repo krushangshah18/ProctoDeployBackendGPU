@@ -1,8 +1,8 @@
 # ProctorPod — Session Context & Handoff Document
 
 > **Read this at the start of every new session.** Also read `CLAUDE.md` for full system architecture.
-> This file covers: what has been built, current infrastructure state, exactly what to do next.
-> Last updated: 2026-03-19 (office session — migrating from RunPod to AWS EC2)
+> This file is append-versioned — past decisions are preserved so you can understand *why* things are the way they are.
+> Last updated: 2026-03-20
 
 ---
 
@@ -16,378 +16,399 @@ An **AI-powered online exam proctoring system**:
 
 ---
 
-## 2. Infrastructure — MIGRATED FROM RUNPOD TO AWS EC2
+## 2. Infrastructure — Current State (AWS EC2)
 
-### Why we left RunPod
+### Why we left RunPod (historical)
 1. Office network FortiGuard IPS blocked `*.proxy.runpod.net` (category: "Proxy Avoidance") → 403 on every request
 2. RunPod containers block all UDP ports → WebRTC media streams fail (state→failed)
-3. Container creation kept failing with `context deadline exceeded` / `exit status 1` (physical machine failures)
+3. Container creation kept failing with `context deadline exceeded` / `exit status 1`
 4. SSH relay `ssh.runpod.io` also blocked by FortiGuard
 
-### Target: AWS EC2 g4dn.xlarge (Mumbai — ap-south-1)
+### Current: AWS EC2 g4dn.xlarge (Mumbai — ap-south-1) ✅ RUNNING
 
-**Instance details (being set up right now):**
 - **Instance name**: `proctor-backend`
 - **Region**: `ap-south-1` (Mumbai)
 - **Instance type**: `g4dn.xlarge` — 4 vCPU, 16 GB RAM, 1× NVIDIA T4 GPU (16 GB VRAM)
 - **AMI**: `Deep Learning Base AMI with Single CUDA (Ubuntu 22.04)` — ami-076dd1c646bcc16c4
-  - Has CUDA pre-installed, Docker + nvidia-container-toolkit pre-configured
-  - SSH username: `ubuntu`
-- **Key pair**: `proctor-key` (.pem file — downloaded to local machine)
-- **Security group**: `proctor-sg` with rules:
-  - TCP 22 from 0.0.0.0/0 (SSH)
-  - TCP 8000 from 0.0.0.0/0 (FastAPI backend)
-  - UDP 10000–60000 from 0.0.0.0/0 (WebRTC media streams — critical, was blocked on RunPod)
+- **SSH username**: `ubuntu`
+- **Key pair**: `proctor-key` (.pem file — on local machine)
+- **Elastic IP**: `13.201.166.165` (permanent — never changes on stop/start)
+- **Security group** `proctor-sg`:
+  - TCP 22 (SSH), TCP 8000 (FastAPI), UDP 10000–60000 (WebRTC media)
 - **Storage**: 50 GB gp3
-- **Pricing**: ~$0.586/hr Ubuntu On-Demand (Mumbai)
+- **Pricing**: ~$0.586/hr On-Demand
 
-### CURRENT BLOCKER — AWS vCPU Quota = 0
-
-**The instance launch failed with:**
-```
-You have requested more vCPU capacity than your current vCPU limit of 0 allows
-for the instance bucket that the specified instance type belongs to.
-```
-
-**What needs to be done RIGHT NOW:**
-1. Go to AWS Console → **Service Quotas** → AWS Services → **Amazon EC2**
-2. Search: `Running On-Demand G and VT instances`
-3. Current value: **0** — click **Request increase at account level**
-4. Request value: **4** (g4dn.xlarge needs exactly 4 vCPUs)
-5. Description to write:
-   ```
-   Running a GPU-based AI inference server for exam proctoring.
-   Requesting 4 vCPUs to launch one g4dn.xlarge instance.
-   ```
-6. Submit — approval is usually automatic or within 2–24 hours
-7. You will get an email when approved
-
-**After quota is approved:**
-- Go back to EC2 → Launch Instance
-- Everything is already configured (AMI, instance type, security group, storage)
-- Just click Launch Instance again — all settings are preserved in the launch wizard
-- Then immediately set up an **Elastic IP** (see Section 4 below)
-
----
-
-## 3. Docker Image (Backend)
-
-- **Registry**: Docker Hub → `krushang08/proctor-webrtc:latest`
+### Docker image
+- **Registry**: `krushangshahdrc18/proctor-backend:latest`
 - **Base**: `nvidia/cuda:12.4.1-cudnn-runtime-ubuntu22.04`
 - **PyTorch**: cu124 wheels
 - **CMD**: `python main.py --device auto --half --warmup 3`
-- **Key pinned versions**: `mediapipe==0.10.11`, `protobuf==3.20.3` (newer mediapipe breaks solutions API)
-- **Last pushed**: Stable build — confirmed running on NVIDIA GPU with CUDA FP16
+- **Key pinned versions**: `mediapipe==0.10.11`, `protobuf==3.20.3`
+
+### Run command (always use --network host for WebRTC UDP)
+```bash
+docker run -d --name proctor --gpus all --network host --restart unless-stopped krushangshahdrc18/proctor-backend:latest
+```
+
+> **Why `--network host`**: With Docker bridge networking, STUN returns the container's internal IP (172.x.x.x) as the ICE candidate. The browser can't reach that → WebRTC stays `connecting` forever. Host networking makes STUN see the real EC2 public IP → ICE succeeds. Note: drop `-p 8000:8000` when using host networking (port mapping is ignored).
+
+### View logs
+```bash
+docker logs -f proctor              # follow live
+docker logs --tail 100 -f proctor   # last 100 lines + follow
+docker logs --since 5m proctor      # last 5 minutes
+```
+
+### Frontend config
+```
+# frontend/.env.local
+NEXT_PUBLIC_BACKEND_URL=http://13.201.166.165:8000
+```
 
 ---
 
-## 4. Step-by-Step: After Quota Approved — Launch & Setup
+## 3. Quick Reference Commands
 
-### Step 1 — Launch Instance
-- EC2 Console → Launch Instance (settings already configured)
-- Click Launch Instance
-- Wait ~2 minutes for `running` state
-
-### Step 2 — Elastic IP (Do immediately — critical)
-Without Elastic IP, the instance gets a new public IP every stop/start, requiring `.env.local` update every time.
-```
-EC2 Console → Elastic IPs (left sidebar, Network & Security)
-→ Allocate Elastic IP address → Allocate
-→ Select new IP → Actions → Associate Elastic IP address
-→ Choose instance: proctor-backend → Associate
-```
-**Note this IP down permanently** — it never changes.
-
-### Step 3 — SSH into instance
 ```bash
-chmod 400 /path/to/proctor-key.pem
-ssh -i /path/to/proctor-key.pem ubuntu@<elastic-ip>
-```
+# SSH into EC2
+ssh -i /path/to/proctor-key.pem ubuntu@13.201.166.165
 
-### Step 4 — Verify GPU
-```bash
+# GPU check
 nvidia-smi
-# Should show: Tesla T4, CUDA 12.x
-```
 
-### Step 5 — Verify Docker GPU access
-```bash
-docker run --rm --gpus all nvidia/cuda:12.4.1-base-ubuntu22.04 nvidia-smi
-# Should show T4 inside Docker
-```
-
-### Step 6 — Pull and run Docker container
-```bash
-docker pull krushang08/proctor-webrtc:latest
-
-docker run -d \
-  --name proctor \
-  --gpus all \
-  -p 8000:8000 \
-  --restart unless-stopped \
-  krushang08/proctor-webrtc:latest
-```
-
-### Step 7 — Verify backend is running
-```bash
+# Docker management
+docker ps
 docker logs -f proctor
-# Should see: "ObjectDetector ready device=cuda half=True"
-# Should see: "Uvicorn running on http://0.0.0.0:8000"
+docker restart proctor
+docker exec -it proctor bash
 
-curl http://localhost:8000/metrics
-# Should return JSON with system metrics
-```
+# Health checks
+curl http://13.201.166.165:8000/metrics
+curl http://13.201.166.165:8000/sessions
+curl http://13.201.166.165:8000/system/report
 
-### Step 8 — Update frontend .env.local
-```
-NEXT_PUBLIC_BACKEND_URL=http://<elastic-ip>:8000
-```
-Note: HTTP (not HTTPS) — EC2 direct access. Camera/mic on candidate page requires HTTPS
-or localhost. See Section 7 for the HTTPS solution.
+# SSH tunnel for HTTPS workaround (getUserMedia)
+ssh -N -L 8000:localhost:8000 -i proctor-key.pem ubuntu@13.201.166.165
+# Then set: NEXT_PUBLIC_BACKEND_URL=http://localhost:8000
 
-### Step 9 — Test single user
-```
-http://localhost:3000/candidate  →  start exam (WebRTC connects)
-http://localhost:3000/admin      →  see session card appear
+# Frontend dev
+cd frontend && npm run dev   # http://localhost:3000
+
+# Build + push Docker image
+cd Proctor-webRTC
+docker build -t krushangshahdrc18/proctor-backend:latest .
+docker push krushangshahdrc18/proctor-backend:latest
+
+# Deploy on EC2 (single line)
+docker pull krushangshahdrc18/proctor-backend:latest && docker stop proctor && docker rm proctor && docker run -d --name proctor --gpus all --network host --restart unless-stopped krushangshahdrc18/proctor-backend:latest
 ```
 
 ---
 
-## 5. What Has Been Built & Completed
+## 4. Current Configuration (config.py)
 
-### Backend Features (all working)
-- [x] FastAPI + aiortc WebRTC signaling (`POST /offer`)
-- [x] YOLOv8 batch inference (GPU, FP16, warmup, auto device selection)
-- [x] MediaPipe FaceMesh (head pose, gaze, lip movement, blink detection)
-- [x] Silero-VAD audio monitoring via WebRTC push mode
-- [x] Risk scoring engine (fixed + decaying buckets, NORMAL→WARNING→HIGH_RISK→TERMINATED)
-- [x] Alert engine with cooldowns and SSE streaming
-- [x] Debug overlay toggle with CV2 annotations
-- [x] Tab switch detection + auto-terminate at 3 switches
-- [x] 5-minute hard exam time limit (RISK_SESSION_DURATION_S = 300)
-- [x] Metrics endpoint (`GET /metrics`) + System report (`GET /system/report`)
-- [x] Proof capture (JPEG + WAV on alert)
-- [x] Structured JSON logging with rotation
-- [x] **Trickle ICE** — sends WebRTC offer immediately, candidates trickle via POST /ice-candidate/{pc_id}
-- [x] **8-second grace period** on WebRTC disconnected state before marking session ended
-- [x] **MediaPipe latency tracking** — `metrics.record_mediapipe_latency()` called after gather()
-- [x] **Audio VAD latency tracking** — `metrics.record_audio_latency()` called after each silero inference
-- [x] Both exposed in `GET /metrics` under `"mediapipe"` and `"audio"` keys
-
-### Frontend Features (all working)
-- [x] Admin dashboard (`/admin`) — live session cards
-- [x] Session detail (`/admin/session/[pc_id]`) — snapshot, debug toggle, SSE alerts
-- [x] System monitor (`/admin/monitor`) — live metrics + system report
-- [x] Candidate page (`/candidate`) — WebRTC, tab switch detection, window blur, copy-paste disabled
-- [x] Trickle ICE implementation — `onicecandidate` sends to `/ice-candidate/{pc_id}`
-- [x] 8s disconnect grace — `onconnectionstatechange` with setTimeout
-
-### Load Test Tools (`load_test/`)
-- [x] `client.py` — single WebRTC client streaming a video file
-- [x] `runner.py` — N concurrent clients with live metrics dashboard
-- [x] `benchmark.py` — multi-level benchmark (1,5,10,25,50 clients) with HTML report
-  - Charts: tick latency, YOLO latency, CPU, 10Hz maintenance, GPU (if available)
-  - **NEW**: MediaPipe latency chart + Audio VAD latency chart
-  - **NEW**: MP Avg(ms) and VAD Avg(ms) columns in results table
-  - Bottleneck analysis: identifies which resource saturates first
-- [x] `report.py` — summary report generator for runner.py output
-- [x] `test_video.mp4` — test video exists (no audio track)
+| Key | Value | Why |
+|-----|-------|-----|
+| `MAX_SESSIONS` | 5 | Benchmarked safe limit on g4dn.xlarge at full detection quality |
+| `TICK_RATE` | 10 Hz | Duration gates are 1.5–2 s; 10 Hz gives 15–20 samples per window |
+| `YOLO_DEVICE` | `"auto"` | Uses CUDA if available, falls back to CPU |
+| `YOLO_HALF` | `True` | FP16 on T4: ~2× throughput, negligible quality loss |
+| `YOLO_WARMUP_FRAMES` | 3 | Pre-compile CUDA kernels at startup |
+| `YOLO_IMGSZ` | 640 | Do NOT reduce — 320 loses earbud detection (small object) |
+| `MEDIAPIPE_STRIDE` | 3 | Fresh FaceMesh every 3rd tick per session; reuse last result otherwise |
 
 ---
 
-## 6. Recent Code Changes (This Session — 2026-03-19)
+## 5. Architecture — Inference Pipeline
+
+```
+Tick loop (10 Hz target)
+├── asyncio.gather() — YOLO + MediaPipe run CONCURRENTLY
+│   ├── YOLO batch → GPU  (all N frames in one forward pass)
+│   └── MediaPipe thread pool (stride=3: only ceil(N/3) sessions per tick)
+│       └── session.run_mediapipe(frame) → FaceMesh → HeadPose → Lip
+└── session.update() for each session — sequential, fast CPU
+    ├── ObjectTemporalTracker (time-based vote window)
+    ├── HeadTracker (duration gates)
+    ├── RiskEngine (score accumulation)
+    └── SSE push to admin frontend
+```
+
+**Why YOLO + MP concurrent**: YOLO is GPU-bound. While the GPU runs inference the CPU is free to run MediaPipe. Using `asyncio.gather(yolo_task, mp_gather)` makes wall-clock cost = `max(YOLO_ms, MP_ms)` instead of sum.
+
+**Why stride=3**: At 5 users, serial MP = 5×15ms = 75ms per tick. With stride=3: ceil(5/3)=2 sessions per tick = 30ms. Since YOLO takes ~60ms, MP is hidden behind YOLO in the overlap.
+
+---
+
+## 6. Change Log (Versioned)
+
+### v1.0 — Initial CPU Build (Local Machine)
+**Date**: Before 2026-03-19
+**What existed**: Basic working proctoring system, CPU-only, `MAX_SESSIONS=3`.
+- YOLO + MediaPipe ran sequentially in the tick loop
+- MediaPipe called in `ThreadPoolExecutor`, but run sequentially per tick (one await after another)
+- Profiled: 1 user = 94ms YOLO (CPU) + 40ms MP = 134ms tick → 7.5 Hz
+
+---
+
+### v1.1 — RunPod GPU Attempt (Failed — abandoned)
+**Date**: ~2026-03-18
+**What was tried**: Deployed to RunPod GPU container.
+**Why failed**:
+- Office FortiGuard IPS blocked `*.proxy.runpod.net` → 403 on all requests
+- RunPod blocked all UDP → WebRTC `state→failed`
+- SSH relay also blocked
+**Decision**: Migrated to AWS EC2 g4dn.xlarge (Mumbai) with open UDP 10000–60000.
+
+---
+
+### v1.2 — AWS EC2 GPU Build + WebRTC Stability Fixes
+**Date**: 2026-03-19
+**Changes**:
+- Migrated to `g4dn.xlarge` (T4 GPU, 4 vCPU, 16 GB RAM)
+- `YOLO_HALF=True`, `YOLO_WARMUP_FRAMES=3`, `YOLO_DEVICE="auto"`
+- Added `argparse` CLI (`--device`, `--half`, `--warmup`, `--port`) to `main.py`
+- Added `uvloop` (libuv asyncio event loop — lower per-coroutine overhead)
+- Added `RequestMetricsMiddleware`, `GET /metrics`, `GET /system/report`
+- Added `MEDIAPIPE_STRIDE=3` + `YOLO_IMGSZ=640` to `config.py`
+- Coordinator: stagger-rotates which sessions get fresh MP each tick
+- Coordinator: YOLO + MP submitted concurrently via `asyncio.gather()`
+
+**WebRTC freeze bugs fixed**:
+
+| Bug | Root cause | Fix |
+|-----|-----------|-----|
+| Frame freeze after 2–3 min | `asyncio.wait_for` cancelled `track.recv()` mid-flight → corrupted aiortc jitter buffer | Replaced with `asyncio.wait({task}, timeout=N)` — never cancels tasks |
+| `ValueError: No decoder found for MIME type 'video/rtx'` | aiortc negotiated RTX retransmission alongside VP8; browser sent RTX packets → `decoder_worker` thread crashed → `recv()` blocked forever | Added `_strip_rtx_from_sdp()` — removes all RTX payload types from offer SDP before `setRemoteDescription` |
+| Frames not decoded | `frame.to_ndarray(format="bgr24")` raised on corrupt frames | Wrapped in try-except, skip frame on error |
+
+**Confirmed**: 5-minute streaming stable, no freezes.
+
+---
+
+### v1.3 — ProcessPoolExecutor Experiment (Reverted)
+**Date**: 2026-03-20
+**What was tried**: Replace `ThreadPoolExecutor` for MediaPipe with `ProcessPoolExecutor` (spawn context) to bypass the GIL and get true parallel FaceMesh execution.
+
+**Architecture**:
+- `facemesh_worker.py` (top-level): per-process FaceMesh singleton, `static_image_mode=True`, returns float32 landmark bytes via IPC
+- Frames downscaled to 320×240 before IPC (4× less data)
+- `_FakeLandmark` duck-type class in session to deserialize landmark bytes
+- `run_headpose_lip(frame, lm_bytes)` in session for phase-2 HeadPose+Lip
+- YOLO (GPU) and FaceMesh (process pool) ran concurrently via `asyncio.gather()`
+
+**Why reverted**:
+- IPC overhead (pickle/unpickle frame bytes + landmark bytes per session per tick) added unpredictable latency spikes
+- Occasional worker stalls → `_tick()` caught `Exception` and returned early → YOLO results silently dropped for that tick
+- Dropped ticks broke `ObjectTemporalTracker` vote accumulation → temporal vote windows never filled → earbud/phone detections failed intermittently for all users
+- ProcessPool benefit only materialises at 10+ concurrent users; at target of 5 users it was net negative
+- For 5 users/stride=3: only 2 serial MP calls per tick = 30ms → already hidden behind YOLO's ~60ms GPU time
+
+**Decision**: Reverted to `ThreadPoolExecutor`. Kept the `asyncio.gather()` YOLO+MP overlap — that's a real win regardless. `facemesh_worker.py` kept in codebase for potential future use at higher user counts.
+
+---
+
+### v1.4 — MAX_SESSIONS=5 + Detection Fix for Later-Joining Users
+**Date**: 2026-03-20
+
+#### Change 1: MAX_SESSIONS reduced to 5
+**Why**: Benchmarked 2, 5, 6, 7 users. Quality and tick rate hold well at 5. Above that, tick latency climbs and detection reliability degrades. 5 is the confirmed safe limit on g4dn.xlarge.
+
+#### Change 2: `_tick_fps` initial value bug fix
+**Bug**: Users 3 and 4 (later-joining sessions) had severely degraded detection — earbuds, phones not triggering.
+
+**Root cause**: `ObjectTemporalTracker.update()` computes:
+```python
+min_votes = max(MIN_VOTES_FLOOR, int(fps × window_s × ratio))
+```
+This uses `session._tick_fps` which is an EMA of the actual coordinator tick rate. `_tick_fps` was **initialised at 15.0** (wrong — that's the WebRTC camera fps, not the coordinator rate).
+
+Actual coordinator rate on 4-user load: ~8 Hz.
+
+For earbud (`ratio = EARBUD_MIN_VOTES/OBJECT_WINDOW = 9/15 = 0.60`, `window_s = 1.0`):
+- With `_tick_fps=15.0`: `min_votes = int(15 × 1.0 × 0.60) = 9` required in 1 second
+- But only ~8 ticks/second available → **9 > 8 → physically impossible to confirm**
+
+Users 1 & 2 worked fine because their `_tick_fps` had already converged to ~8 Hz over many ticks (EMA α=0.1 took ~25 ticks = 2.5 seconds to converge). Users 3 & 4 were still at 15.0.
+
+**Fix**:
+1. `proctor_session.py`: `self._tick_fps = 15.0` → `self._tick_fps = 10.0` (coordinator target rate)
+2. EMA alpha: `0.9/0.1` → `0.75/0.25` — converges to true rate in ~5 ticks (0.5 s) instead of ~25 ticks (2.5 s)
+
+With `_tick_fps=10.0`: `min_votes = int(10 × 1.0 × 0.60) = 6` — achievable at 8 Hz (needs 75% positive detections). ✅
+
+**Files changed**:
 
 | File | Change |
 |------|--------|
-| `Proctor-webRTC/core/metrics.py` | Added `_mediapipe_latencies`, `_audio_latencies` deques; `record_mediapipe_latency()`, `record_audio_latency()` methods; exposed under `"mediapipe"` and `"audio"` in snapshot() |
-| `Proctor-webRTC/core/proctor_coordinator.py` | Times `asyncio.gather(*mp_tasks)` wall clock; records via `metrics.record_mediapipe_latency()` only when real MediaPipe work ran |
-| `Proctor-webRTC/core/audio_monitor.py` | Times each silero VAD `model()` call in both `_run()` and `_run_vad_only()`; records via `metrics.record_audio_latency()` |
-| `load_test/benchmark.py` | Reads `mediapipe.lat_avg_ms` and `audio.lat_avg_ms` from /metrics; computes stats; prints MP/Audio lines in summary; adds MP+Audio chart and table columns to HTML report |
-| `load_test/runner.py` | Fixed field names: `yolo.lat_avg_ms`, `system.cpu_percent`, `system.mem_rss_mb` |
+| `config.py` | `MAX_SESSIONS = 5` |
+| `core/proctor_session.py` | `_tick_fps` init: `15.0 → 10.0`; EMA alpha: `0.1 → 0.25` |
+| `core/proctor_coordinator.py` | Reverted ProcessPool → ThreadPool; kept YOLO+MP `asyncio.gather()` overlap; kept stride=3 |
 
 ---
 
-## 7. HTTPS for Camera Access (Important)
-
-Browsers block `getUserMedia()` (camera/mic) on plain HTTP except for `localhost`.
-Since EC2 backend is accessed via `http://<ip>:8000`, the candidate page needs a workaround:
-
-**Option A — SSH Tunnel (for testing)**
-```bash
-ssh -N -L 8000:localhost:8000 -i proctor-key.pem ubuntu@<elastic-ip>
-# Then set: NEXT_PUBLIC_BACKEND_URL=http://localhost:8000
-# localhost is trusted, getUserMedia works
-```
-
-**Option B — Self-signed cert + nginx (for production-like testing)**
-```bash
-# On EC2 instance
-sudo apt install nginx certbot -y
-# Generate self-signed cert
-openssl req -x509 -nodes -days 365 -newkey rsa=2048 \
-  -keyout /etc/ssl/proctor.key -out /etc/ssl/proctor.crt \
-  -subj "/CN=<elastic-ip>"
-# Configure nginx reverse proxy with SSL on 443 → localhost:8000
-```
-Then set `NEXT_PUBLIC_BACKEND_URL=https://<elastic-ip>` and accept the browser SSL warning once.
-
-**Option C — Use ngrok (quickest for demo)**
-```bash
-# On EC2
-ngrok http 8000
-# Gives: https://xxxx.ngrok.io → use this as NEXT_PUBLIC_BACKEND_URL
-```
-
----
-
-## 8. Optimization Roadmap (Planned — Not Yet Implemented)
-
-Discussed but not yet implemented. Do these after benchmark data confirms bottlenecks:
-
-### Phase 1 — High impact, low effort (do regardless of benchmark)
-1. **uvloop** — drop-in asyncio replacement, 2–4× I/O throughput
-   ```bash
-   pip install uvloop
-   ```
-   ```python
-   # main.py — one line
-   import uvloop
-   asyncio.set_event_loop_policy(uvloop.EventLoopPolicy())
-   ```
-
-2. **Adaptive MediaPipe frame rate** — run at 5Hz instead of 10Hz when >10 sessions active
-   - Duration gates are 1.5–2s; 5Hz gives 7–10 samples per window, sufficient
-   - ~2× MediaPipe CPU capacity
-   - In `proctor_session.py`: skip MediaPipe every other tick when load is high
-
-### Phase 2 — After benchmark data
-3. **TensorRT export** — if YOLO is the bottleneck (3–5× speedup)
-   ```python
-   model = YOLO("finalBestV5.pt")
-   model.export(format="engine", device=0, half=True, imgsz=640)
-   # Then load: YOLO("finalBestV5.engine")
-   ```
-   Note: .engine file is GPU-specific (T4). Rebuild if instance type changes.
-
-4. **imgsz=320 at load time** — if YOLO throughput needs improvement
-   ```python
-   self.model.overrides['imgsz'] = 320  # set at load, never at inference time
-   ```
-   Test detection quality (small objects like earbuds) before committing.
-
-5. **Pre-downscale frames for MediaPipe** — reduce 720p→480p before passing to FaceMesh
-   (MediaPipe resizes to 192×192 internally anyway, no quality loss)
-
-### Why NOT InsightFace for GPU MediaPipe
-- InsightFace is a face recognition library — 5-point or 68-point landmarks only
-- We need 468 landmarks for: lip MAR (40 lip points), EAR/blink (16 eye points), head pose PnP
-- MediaPipe's FaceMesh model is 4MB — too small for GPU transfer overhead to be worth it
-- MediaPipe on CPU with XNNPACK int8 is ~8ms/frame, already very fast
-- More CPU cores (g4dn.2xlarge = 8 cores) is better value than GPU-izing MediaPipe
-
----
-
-## 9. EC2 Instance Type Reference (For Future Scaling)
-
-| Instance | vCPU | RAM | GPU | Est. max users* | On-Demand/hr |
-|---|---|---|---|---|---|
-| g4dn.xlarge | 4 | 16 GB | T4 16GB | 25–30 | $0.586 |
-| g4dn.2xlarge | 8 | 32 GB | T4 16GB | 45–50 | ~$0.752 |
-| g4dn.4xlarge | 16 | 64 GB | T4 16GB | 60–70 | ~$1.204 |
-| g5.xlarge | 4 | 16 GB | A10G 24GB | 25–30 | ~$1.006 |
-| g6.2xlarge | 8 | 32 GB | L4 24GB | 50–60 | ~$1.011 |
-
-*Estimates assume TensorRT + adaptive MediaPipe optimizations applied.
-
-**Recommendation**: Start with g4dn.xlarge, benchmark, then upgrade to g4dn.2xlarge if
-MediaPipe CPU is the bottleneck (more cores, same T4 GPU, only 28% more expensive).
-Avoid G5 unless benchmark proves YOLO is the bottleneck.
-
----
-
-## 10. Critical Bug History (Do Not Re-Introduce)
+## 7. All Known Bugs Fixed (Do Not Re-Introduce)
 
 | Bug | Root Cause | Fix |
 |-----|-----------|-----|
 | `mediapipe AttributeError: no attribute 'solutions'` | pip installed mediapipe 0.11+ | Pin: `mediapipe==0.10.11` + `protobuf==3.20.3` |
-| `ModuleNotFoundError: pyaudio` on server startup | Top-level `import pyaudio` | Made lazy import inside `_run()` only |
-| `torchaudio CUDA version mismatch` | torchaudio from default PyPI (cu121) vs torch cu124 | Install all three together: `torch torchvision torchaudio --index-url .../cu124` |
-| YOLO bounding boxes in wrong position | Pre-resizing frames + passing `imgsz` at runtime = double transform | Never pre-resize; never pass `imgsz` at inference time |
-| Backend freeze on startup | `model.half()` + warmup in `__init__()` blocked asyncio | Warmup in `_schedule_warmup()` daemon thread |
-| Tab switch not terminating at 3 | Browser suspended fetch when tab hidden | `fetch(..., keepalive: true)` |
-| Alert flooding after termination | Tick loop kept processing | `if self.risk.terminated: return` in `session.update()` |
-| ERR_EMPTY_RESPONSE on /offer | SSL certs present → HTTPS mode, frontend using HTTP | `mv ~/key.pem ~/key.pem.bak` to disable HTTPS mode |
-| WebRTC state→failed on RunPod | RunPod blocks all UDP — no media path | Migrated to AWS EC2 with UDP 10000-60000 open |
-| CORS 403 on RunPod proxy URL | FortiGuard IPS at office blocks proxy.runpod.net | Migrated to AWS EC2 direct IP access |
+| `ModuleNotFoundError: pyaudio` on startup | Top-level `import pyaudio` | Lazy import inside `_run()` only |
+| `torchaudio CUDA version mismatch` | torchaudio from PyPI cu121 vs torch cu124 | Install all three together with `--index-url .../cu124` |
+| YOLO bboxes in wrong position | Pre-resize frames + `imgsz` at runtime = double coordinate transform | Never pre-resize; never pass `imgsz` at inference time; set at load via `model.overrides` |
+| Backend freeze on startup | `model.half()` + warmup in `__init__()` blocked asyncio event loop | Warmup moved to `_schedule_warmup()` daemon thread |
+| Tab switch not terminating at count 3 | Browser suspended fetch when tab hidden | `fetch(..., keepalive: true)` in candidate page |
+| Alert flooding after termination | Tick loop kept processing terminated session | `if self.risk.terminated: return` in `session.update()` |
+| ERR_EMPTY_RESPONSE on /offer | SSL cert files present → server switched to HTTPS; frontend using HTTP | `mv ~/key.pem ~/key.pem.bak` disables HTTPS mode |
+| WebRTC `state→connecting` forever on EC2 Docker | Bridge networking → STUN returns container IP → browser can't reach it | `--network host` in docker run command |
+| Frame freeze after 2–3 min | `asyncio.wait_for` cancelled `track.recv()` → corrupted jitter buffer | Use `asyncio.wait({task}, timeout=N)` — never cancels tasks on timeout |
+| `video/rtx` decoder crash → freeze | aiortc negotiated RTX; browser sent RTX packets → `decoder_worker` crashed | `_strip_rtx_from_sdp()` removes RTX PTs from offer SDP before `setRemoteDescription` |
+| Users 3+ miss detections (earbud/phone) | `_tick_fps` init at 15.0; `min_votes = int(15×1.0×0.60) = 9` but only 8 ticks/s available | Init `_tick_fps = 10.0`; increase EMA alpha to 0.25 for fast convergence |
+| ProcessPool dropped YOLO ticks | Worker stalls → `_tick()` returned early → temporal vote windows never filled | Reverted to ThreadPoolExecutor for 5-user target |
 
 ---
 
-## 11. Trickle ICE Implementation (Already Done)
+## 8. Scaling Reference
 
-WebRTC now uses Trickle ICE — offer sent immediately, candidates trickle in. Reduces connection time from 3–5s to <1s.
+### Benchmarked results (g4dn.xlarge, current build)
+| Users | Tick rate | Detection quality | Verdict |
+|-------|-----------|-------------------|---------|
+| 1–2 | ~10 Hz | Excellent | ✅ |
+| 3–5 | ~8 Hz | Good | ✅ Safe limit |
+| 6–7 | ~6–7 Hz | Degraded | ⚠️ Misses fast events |
+| 10+ | ~4–5 Hz | Poor | ❌ |
 
-**Backend** (`server.py`):
-- `_pcs_by_id: dict[str, RTCPeerConnection]` — stores PCs by device_id for ICE routing
-- `POST /ice-candidate/{pc_id}` endpoint — receives browser ICE candidates, calls `pc.addIceCandidate()`
-- Uses `aiortc.sdp.candidate_from_sdp()` to parse candidate strings
-
-**Frontend** (`frontend/app/candidate/page.tsx`):
-- Sends offer immediately (no `waitGathering` / `iceGatheringState` wait)
-- `pc.onicecandidate = ({ candidate }) => api.sendIceCandidate(answer.device_id, candidate.toJSON())`
-- 8-second disconnect grace: `onconnectionstatechange` with `setTimeout(..., 8000)` on "disconnected"
-
-**STUN only** (no TURN needed for EC2):
-```python
-_ICE_SERVERS = RTCConfiguration(iceServers=[
-    RTCIceServer(urls=["stun:stun.l.google.com:19302"]),
-    RTCIceServer(urls=["stun:stun1.l.google.com:19302"]),
-])
+### Running 2 containers on 1 instance (8 users total)
+Both containers use `--network host`. aiortc assigns random UDP ports per connection — no collision.
+Container 1 → port 8000 (default CMD)
+Container 2 → port 8001:
+```bash
+docker run -d --name proctor2 --gpus all --network host --restart unless-stopped krushangshahdrc18/proctor-backend:latest python main.py --device auto --half --warmup 3 --port 8001
 ```
-EC2 security group allows UDP — STUN (IP discovery) is sufficient. TURN (relay) was only needed when UDP was completely blocked (RunPod).
+GPU is time-shared. YOLO latency roughly doubles per container (~60ms → ~120ms). Tick rate ~8 Hz still sufficient. Watch CPU — 4 vCPUs for 2 containers is tight.
+
+### EC2 instance upgrade path
+| Instance | vCPU | RAM | GPU | Est. safe users | On-Demand/hr |
+|----------|------|-----|-----|-----------------|--------------|
+| g4dn.xlarge | 4 | 16 GB | T4 16GB | 5 (current) | $0.586 |
+| g4dn.2xlarge | 8 | 32 GB | T4 16GB | 10–12 | ~$0.752 |
+| g4dn.4xlarge | 16 | 64 GB | T4 16GB | 20–25 | ~$1.204 |
+
+Upgrade trigger: if tick latency at 5 users exceeds 150ms consistently.
 
 ---
 
-## 12. Load Testing Workflow (After EC2 is Running)
+## 9. HTTPS for Camera Access
 
-### Setup
+Browsers block `getUserMedia()` on plain HTTP except `localhost`.
+
+**Option A — SSH Tunnel (easiest for testing)**
+```bash
+ssh -N -L 8000:localhost:8000 -i proctor-key.pem ubuntu@13.201.166.165
+# Set: NEXT_PUBLIC_BACKEND_URL=http://localhost:8000
+```
+
+**Option B — Self-signed cert + nginx**
+```bash
+openssl req -x509 -nodes -days 365 -newkey rsa:2048 \
+  -keyout /etc/ssl/proctor.key -out /etc/ssl/proctor.crt \
+  -subj "/CN=13.201.166.165"
+# nginx reverse proxy: 443 → localhost:8000
+# Set: NEXT_PUBLIC_BACKEND_URL=https://13.201.166.165
+```
+
+**Option C — ngrok (quickest demo)**
+```bash
+ngrok http 8000
+# Use the https://xxxx.ngrok.io URL
+```
+
+---
+
+## 10. Features Built (Complete List)
+
+### Backend
+- [x] FastAPI + aiortc WebRTC signaling (`POST /offer`)
+- [x] YOLOv8 batch inference (GPU FP16, warmup, auto device selection)
+- [x] MediaPipe FaceMesh — head pose, gaze, lip movement, blink detection
+- [x] Silero-VAD audio monitoring via WebRTC PCM push mode
+- [x] Risk scoring (fixed + decaying buckets, NORMAL→WARNING→HIGH_RISK→TERMINATED)
+- [x] Alert engine with cooldowns + SSE streaming to admin
+- [x] Debug overlay toggle (CV2 annotations on snapshot)
+- [x] Tab switch detection + auto-terminate at 3 switches
+- [x] 5-minute hard exam time limit
+- [x] `GET /metrics` + `GET /system/report`
+- [x] Proof capture (JPEG per alert, WAV for audio alerts)
+- [x] Structured JSON logging with rotation
+- [x] Trickle ICE — offer sent immediately, ICE candidates trickle via `POST /ice-candidate/{pc_id}`
+- [x] 8-second disconnect grace on WebRTC `disconnected` state
+- [x] MediaPipe + audio VAD latency tracking in metrics
+- [x] RTX SDP strip — prevents aiortc `video/rtx` decoder crash
+- [x] VP8 codec preference forcing via `setCodecPreferences`
+- [x] YOLO + MediaPipe concurrent via `asyncio.gather()` (overlap GPU + CPU work)
+- [x] MediaPipe stride=3 — reduces MP CPU load 3× with no quality loss at 10 Hz
+- [x] `_tick_fps` correctly initialised at 10.0 — all users detect equally from first tick
+
+### Frontend
+- [x] Admin dashboard (`/admin`) — live session cards
+- [x] Session detail (`/admin/session/[pc_id]`) — snapshot, debug toggle, SSE alert log
+- [x] System monitor (`/admin/monitor`) — live metrics + system report
+- [x] Candidate page (`/candidate`) — WebRTC, tab switch, window blur, copy-paste disabled
+- [x] Trickle ICE — `onicecandidate` sends to `/ice-candidate/{pc_id}`
+- [x] 8s disconnect grace — `onconnectionstatechange` with `setTimeout`
+
+### Load Test Tools (`load_test/`)
+- [x] `client.py` — single WebRTC client streaming a video file
+- [x] `runner.py` — N concurrent clients with live metrics dashboard
+- [x] `benchmark.py` — multi-level benchmark with HTML report (tick, YOLO, MP, VAD, CPU/RAM/GPU charts)
+- [x] `report.py` — summary report generator
+
+---
+
+## 11. Next Optimisation (When Needed)
+
+### TensorRT YOLO — biggest remaining gain (3–5× YOLO speedup)
+Only needed if scaling beyond 5 users per container. T4-specific — must build on EC2.
+```bash
+docker exec -it proctor python -c "
+from ultralytics import YOLO
+model = YOLO('finalBestV5.pt')
+model.export(format='engine', device=0, half=True, imgsz=640, batch=8)
+print('done → finalBestV5.engine')
+"
+docker cp proctor:/app/finalBestV5.engine ./Proctor-webRTC/
+```
+Then: `YOLO_MODEL_PATH = os.path.join(BASE_DIR, "finalBestV5.engine")` in `config.py`.
+Note: `.engine` is T4-specific. Re-export if switching instance type.
+
+### ProcessPoolExecutor — revisit at 10+ users
+The v1.3 approach was correct in principle but needs IPC reliability hardening:
+- Add per-task timeout (`asyncio.wait_for` on individual FM futures, not the whole gather)
+- Fallback: if worker result times out, reuse `_last_lm_bytes` silently
+- Only worth doing if tick rate with ThreadPool + stride is insufficient for the target user count
+
+---
+
+## 12. Load Testing Workflow
+
 ```bash
 cd load_test
-pip install -r requirements.txt
-```
-
-### Test video with audio (current test_video.mp4 has no audio)
-```bash
-# Add silent audio track to existing video
+# Add silent audio track to test video (required for VAD testing)
 ffmpeg -i test_video.mp4 -f lavfi -i anullsrc=r=16000:cl=mono \
   -c:v copy -c:a aac -shortest -y test_video_with_audio.mp4
-```
 
-### Run benchmark (main tool)
-```bash
+# Benchmark
 python benchmark.py \
-  --url http://<elastic-ip>:8000 \
+  --url http://13.201.166.165:8000 \
   --video test_video_with_audio.mp4 \
-  --levels 1,5,10,25,50 \
+  --levels 1,5,10 \
   --warmup 30 \
   --steady 120
-# Output: benchmark_<timestamp>.html + .json
-```
 
-Benchmark HTML report shows:
-- Tick latency vs concurrency
-- YOLO latency vs concurrency
-- **MediaPipe latency vs concurrency** (new)
-- **Audio VAD latency vs concurrency** (new)
-- CPU/RAM/GPU usage vs concurrency
-- 10Hz maintenance % vs concurrency
-- Bottleneck analysis: which resource saturates first
-
-### Run simple load test
-```bash
+# Simple load test
 python runner.py \
-  --url http://<elastic-ip>:8000 \
+  --url http://13.201.166.165:8000 \
   --video test_video_with_audio.mp4 \
-  --clients 10 \
+  --clients 5 \
   --duration 300
 ```
 
@@ -396,84 +417,13 @@ python runner.py \
 ## 13. GitHub Repository
 
 - **Repo**: https://github.com/krushangshah18/ProctoDeployBackendGPU.git
-- Push latest changes before switching machines:
+
 ```bash
-git add Proctor-webRTC/core/metrics.py \
-        Proctor-webRTC/core/proctor_coordinator.py \
-        Proctor-webRTC/core/audio_monitor.py \
-        load_test/benchmark.py \
-        load_test/runner.py \
-        SESSION_CONTEXT.md
-git commit -m "Add MediaPipe+audio latency tracking; update session context for EC2 migration"
+git add -p   # stage changes selectively
+git commit -m "your message"
 git push origin main
 ```
 
 ---
 
-## 14. Immediate Next Steps (In Order)
-
-```
-1. [ ] AWS quota approved (email notification) — "Running On-Demand G and VT instances" → 4 vCPUs
-2. [ ] Launch EC2 instance (proctor-backend, g4dn.xlarge, Mumbai)
-3. [ ] Allocate + Associate Elastic IP
-4. [ ] SSH in: ssh -i proctor-key.pem ubuntu@<elastic-ip>
-5. [ ] Verify: nvidia-smi (should show T4)
-6. [ ] Verify: docker run --rm --gpus all nvidia/cuda:12.4.1-base-ubuntu22.04 nvidia-smi
-7. [ ] Run container: docker pull krushang08/proctor-webrtc:latest && docker run -d --gpus all -p 8000:8000 --name proctor krushang08/proctor-webrtc:latest
-8. [ ] Verify backend: docker logs -f proctor (should see cuda device ready)
-9. [ ] Update frontend/.env.local: NEXT_PUBLIC_BACKEND_URL=http://<elastic-ip>:8000
-10.[ ] Set up HTTPS (SSH tunnel OR self-signed cert) for getUserMedia on candidate page
-11.[ ] Test single user end-to-end (candidate → admin → session card appears)
-12.[ ] Add silent audio to test video (ffmpeg command above)
-13.[ ] Run benchmark: python benchmark.py --url http://<elastic-ip>:8000 --video test_video_with_audio.mp4 --levels 1,5,10 --warmup 30 --steady 120
-14.[ ] Analyse HTML report — identify bottleneck (MediaPipe CPU vs YOLO GPU)
-15.[ ] Implement Phase 1 optimizations (uvloop + adaptive MediaPipe)
-16.[ ] Re-benchmark to confirm gains
-17.[ ] Decide on g4dn.xlarge vs g4dn.2xlarge based on real data
-```
-
----
-
-## 15. Quick Reference Commands
-
-```bash
-# SSH into EC2
-ssh -i /path/to/proctor-key.pem ubuntu@<elastic-ip>
-
-# Check GPU
-nvidia-smi
-
-# Docker container management
-docker ps                          # check running
-docker logs -f proctor             # follow logs
-docker restart proctor             # restart container
-docker exec -it proctor bash       # shell inside container
-
-# Health checks
-curl http://<elastic-ip>:8000/metrics
-curl http://<elastic-ip>:8000/sessions
-curl http://<elastic-ip>:8000/system/report
-
-# SSH tunnel for HTTPS workaround
-ssh -N -L 8000:localhost:8000 -i proctor-key.pem ubuntu@<elastic-ip>
-# Then: NEXT_PUBLIC_BACKEND_URL=http://localhost:8000
-
-# Frontend
-cd frontend && npm run dev         # http://localhost:3000
-
-# Push code changes to EC2 without Docker rebuild (no new dependencies)
-scp -i proctor-key.pem Proctor-webRTC/server.py ubuntu@<elastic-ip>:/home/ubuntu/server.py
-ssh -i proctor-key.pem ubuntu@<elastic-ip>
-  docker cp server.py proctor:/app/server.py
-  docker restart proctor
-
-# Full Docker rebuild + push (when requirements.txt or Dockerfile changes)
-cd Proctor-webRTC
-docker build -t krushang08/proctor-webrtc:latest .
-docker push krushang08/proctor-webrtc:latest
-# Then on EC2: docker pull + docker restart proctor
-```
-
----
-
-*Last updated: 2026-03-19. RunPod fully abandoned. AWS EC2 g4dn.xlarge configured and ready to launch. Blocked on vCPU quota increase request — waiting for AWS approval.*
+*Last updated: 2026-03-20. EC2 running and stable. MAX_SESSIONS=5, detection quality confirmed equal for all users. ProcessPool experiment reverted. `_tick_fps` bug fixed.*

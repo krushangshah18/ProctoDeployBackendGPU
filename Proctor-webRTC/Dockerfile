@@ -50,9 +50,10 @@ COPY core/       core/
 COPY detectors/  detectors/
 COPY settings/   settings/
 COPY utils/      utils/
-COPY config.py   .
-COPY server.py   .
-COPY main.py     .
+COPY config.py         .
+COPY facemesh_worker.py .
+COPY server.py         .
+COPY main.py           .
 
 # Runtime directories (logs + proof/report storage)
 RUN mkdir -p logs reports

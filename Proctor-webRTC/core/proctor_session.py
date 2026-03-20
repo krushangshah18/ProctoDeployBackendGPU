@@ -26,6 +26,20 @@ from core.audio_monitor import AudioMonitor, SpeakerAudioDetector
 from core.object_tracker import ObjectTemporalTracker
 from utils import AlertManager, ProofWriter
 
+class _FakeLandmark:
+    """
+    Duck-type MediaPipe NormalizedLandmark — supports landmarks[i].x/y/z access.
+    Used to pass deserialized float32 landmark arrays to HeadPoseDetector and
+    LipDetector, which only access landmarks via attribute lookup (lm.x, lm.y, lm.z).
+    """
+    __slots__ = ("x", "y", "z")
+
+    def __init__(self, x: float, y: float, z: float) -> None:
+        self.x = float(x)
+        self.y = float(y)
+        self.z = float(z)
+
+
 _DEFAULTS = {
     "DETECT_LOOKING_AWAY"    : True,
     "DETECT_LOOKING_DOWN"    : True,
@@ -184,6 +198,10 @@ class ProctorSession:
         self._last_mp_result: tuple | None = None
         self._last_detections: list      = []
 
+        # Cached landmark bytes from ProcessPoolExecutor FaceMesh phase.
+        # Reused on ticks where this session is skipped by the MediaPipe stride.
+        self._last_lm_bytes: bytes | None = None
+
         # Tracks the last wall-clock time face landmarks were actively detected.
         # Used to gate face_hidden: only fires within FACE_HIDDEN_RECENCY_S after
         # a real face was confirmed, preventing YOLO false-positives on a
@@ -195,7 +213,11 @@ class ProctorSession:
         self._face_hidden_recency_s: float = float(cfg.get("FACE_HIDDEN_RECENCY_S", 4.0))
 
         self._last_tick_mono: float = 0.0
-        self._tick_fps:       float = 15.0
+        # Initialise at coordinator target rate (10 Hz), NOT WebRTC camera fps (15-30 Hz).
+        # ObjectTemporalTracker uses this to compute min_votes = fps × window_s × ratio.
+        # Starting at 15 caused new sessions to require 9 votes/s but only ~8 ticks/s
+        # were available → detections impossible until EMA converged (~25 ticks = 2-3s).
+        self._tick_fps:       float = 10.0
 
     # ── Detection toggle helper ───────────────────────────────────────────────
 
@@ -383,13 +405,18 @@ class ProctorSession:
         """Return True if at least one enabled detection requires MediaPipe."""
         return any(self._detect(k) for k in self._MEDIAPIPE_FLAGS)
 
-    # ── MediaPipe (thread pool) ───────────────────────────────────────────────
+    # ── MediaPipe (thread pool — legacy path kept for compatibility) ──────────
 
     def run_mediapipe(self, frame: np.ndarray) -> tuple:
         """
         Run FaceMesh → HeadPoseDetector → LipDetector on *frame*.
         Skipped entirely (null result) if no enabled detection needs it —
         saves ~15–40 ms per tick and one thread-pool slot per session.
+
+        NOTE: The coordinator now uses the two-phase approach:
+          Phase 1 — extract_landmarks() in ProcessPoolExecutor (true parallelism)
+          Phase 2 — run_headpose_lip() inline in the event loop
+        This method is retained for fallback / single-session testing.
         """
         from detectors.lip_detector import LipState
 
@@ -398,6 +425,40 @@ class ProctorSession:
 
         ts          = time.monotonic() - self.session_clock
         landmarks   = self._face_mesh.process(frame)
+        head_result = self.head_detector.detect(frame, draw=False, landmarks=landmarks)
+        lip_result  = self.lip_detector.process(frame, ts, draw=False, landmarks=landmarks)
+        return head_result, lip_result
+
+    # ── MediaPipe Phase 2 — HeadPose + Lip with pre-computed landmarks ────────
+
+    def run_headpose_lip(self, frame: np.ndarray, landmarks_bytes: "bytes | None") -> tuple:
+        """
+        Phase 2 of the two-phase MediaPipe pipeline.
+
+        Called in the asyncio event loop (not a thread pool) after Phase 1
+        (FaceMesh in ProcessPoolExecutor) has returned serialized landmarks.
+
+        Args:
+            frame:           Full-resolution BGR frame (e.g. 640×480).
+            landmarks_bytes: float32 bytes of shape (N, 3) from extract_landmarks(),
+                             or None if no face was detected.
+
+        Returns:
+            (head_result, lip_result) — same shape as run_mediapipe().
+        """
+        from detectors.lip_detector import LipState
+
+        if not self.needs_mediapipe():
+            return (self._NULL_HEAD, LipState(face_detected=False))
+
+        # Deserialize landmarks — duck-type objects matching the MediaPipe API
+        landmarks: list | None = None
+        if landmarks_bytes is not None:
+            arr = np.frombuffer(landmarks_bytes, dtype=np.float32).reshape(-1, 3)
+            landmarks = [_FakeLandmark(arr[i, 0], arr[i, 1], arr[i, 2])
+                         for i in range(len(arr))]
+
+        ts          = time.monotonic() - self.session_clock
         head_result = self.head_detector.detect(frame, draw=False, landmarks=landmarks)
         lip_result  = self.lip_detector.process(frame, ts, draw=False, landmarks=landmarks)
         return head_result, lip_result
@@ -425,7 +486,10 @@ class ProctorSession:
         if self._last_tick_mono > 0:
             dt = now_mono - self._last_tick_mono
             if 0 < dt < 1.0:
-                self._tick_fps = 0.9 * self._tick_fps + 0.1 * (1.0 / dt)
+                # alpha=0.25: converges to true tick rate in ~5 ticks (~0.5 s)
+                # vs alpha=0.10 which took ~25 ticks (~2.5 s).
+                # Fast convergence matters most for sessions that join mid-exam.
+                self._tick_fps = 0.75 * self._tick_fps + 0.25 * (1.0 / dt)
         self._last_tick_mono = now_mono
 
         # Frame quality guard

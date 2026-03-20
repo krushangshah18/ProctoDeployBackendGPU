@@ -9,8 +9,7 @@ YOLO_MODEL_PATH = os.path.join(BASE_DIR, "finalBestV5.pt")
 # 5 Hz on CPU: YOLO takes 200–400 ms per batch, so 10 Hz saturates the loop.
 # Head-pose gates are 1.5–2 s, so 5 Hz still catches them fine.
 TICK_RATE    = 10   # Hz
-MAX_SESSIONS = 40   # GPU build: RTX PRO 4500 (32 vCPU) can handle 40 comfortably at 10 Hz
-                    # CPU build limit was 3; GPU with batched YOLO + parallel MediaPipe scales to 40+
+MAX_SESSIONS = 5    # g4dn.xlarge: benchmarked safe limit at quality + 10 Hz
 
 # ── Detection Toggles ────────────────────────────────────────────────────────
 # Set False to completely skip a detection — no alert, no processing, no score.
@@ -125,4 +124,15 @@ YOLO_WARMUP_FRAMES = 3    # pre-compile CUDA kernels at startup; 0 on CPU
 # YOLO_MIN_VRAM_GB: minimum free GPU VRAM required to use CUDA in "auto" mode.
 # If free VRAM is below this threshold the detector falls back to CPU automatically.
 YOLO_MIN_VRAM_GB   = 2.0    # RTX PRO 4500 has 32 GB; set higher threshold for auto-selection
+
+# YOLO_IMGSZ: input resolution for YOLO inference.
+# Set at MODEL LOAD TIME via model.overrides — never at inference time (breaks
+# batch coord transforms).  320 → ~3× faster than 640, same bbox pixel coords.
+YOLO_IMGSZ        = 640     # keep 640 — needed for earbud/small-object detection
+
+# MEDIAPIPE_STRIDE: run FaceMesh every N ticks per session, reusing last result
+# on skipped ticks.  Duration gates are 1.5–2 s so at 10 Hz / stride 3 = 3.3 Hz
+# per session we still get 5–7 samples per gate — plenty for accurate detection.
+# Reduces MediaPipe wall-clock per tick from N×15ms to ceil(N/3)×15ms.
+MEDIAPIPE_STRIDE  = 3
 

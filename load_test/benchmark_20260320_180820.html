@@ -1,0 +1,260 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>AI Proctor — Performance Benchmark Report</title>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+         background: #0f172a; color: #e2e8f0; padding: 24px; }
+  h1   { font-size: 1.8rem; margin-bottom: 4px; }
+  h2   { font-size: 1.2rem; color: #94a3b8; margin: 32px 0 16px; border-bottom: 1px solid #1e293b; padding-bottom: 8px; }
+  h3   { font-size: 0.95rem; color: #94a3b8; margin-bottom: 12px; }
+  .subtitle { color: #64748b; margin-bottom: 32px; font-size: 0.9rem; }
+  .grid-3  { display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; margin-bottom: 24px; }
+  .grid-2  { display: grid; grid-template-columns: repeat(2, 1fr); gap: 16px; margin-bottom: 24px; }
+  .card    { background: #1e293b; border-radius: 12px; padding: 20px; }
+  .card-highlight { background: #1e293b; border-radius: 12px; padding: 20px;
+                    border: 2px solid #22c55e; }
+  .stat-label { font-size: 0.75rem; color: #64748b; text-transform: uppercase; letter-spacing: 0.05em; }
+  .stat-value { font-size: 2rem; font-weight: 700; margin: 4px 0; }
+  .stat-sub   { font-size: 0.8rem; color: #94a3b8; }
+  .chart-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 16px; margin-bottom: 24px; }
+  .chart-card { background: #1e293b; border-radius: 12px; padding: 20px; }
+  table  { width: 100%; border-collapse: collapse; font-size: 0.85rem; }
+  th     { background: #0f172a; padding: 10px 12px; text-align: left; color: #64748b;
+            font-size: 0.75rem; text-transform: uppercase; letter-spacing: 0.05em; }
+  td     { padding: 10px 12px; border-bottom: 1px solid #0f172a; }
+  tr:hover td { background: #263548; }
+  .tag   { display: inline-block; padding: 2px 8px; border-radius: 4px;
+            font-size: 0.75rem; font-weight: 600; }
+  .tag-green  { background: #14532d; color: #4ade80; }
+  .tag-yellow { background: #713f12; color: #fbbf24; }
+  .tag-red    { background: #7f1d1d; color: #f87171; }
+  .info-grid  { display: grid; grid-template-columns: repeat(2, 1fr); gap: 8px; font-size: 0.85rem; }
+  .info-row   { display: flex; justify-content: space-between; padding: 6px 0;
+                 border-bottom: 1px solid #0f172a; }
+  .info-key   { color: #64748b; }
+  .info-val   { color: #e2e8f0; font-weight: 500; }
+</style>
+</head>
+<body>
+
+<h1>AI Proctor — Capacity Benchmark Report</h1>
+<p class="subtitle">Generated 2026-03-20 18:11:15 · Backend: http://15.206.179.76:8000</p>
+
+<h2>Summary</h2>
+<div class="grid-3">
+  <div class="card-highlight">
+    <div class="stat-label">Max Safe Concurrency</div>
+    <div class="stat-value" style="color:#22c55e">4</div>
+    <div class="stat-sub">clients at stable 10 Hz</div>
+  </div>
+  <div class="card">
+    <div class="stat-label">Primary Bottleneck</div>
+    <div class="stat-value" style="color:#22c55e;font-size:1.4rem">NONE_DETECTED</div>
+    <div class="stat-sub">first resource to saturate</div>
+  </div>
+  <div class="card">
+    <div class="stat-label">Levels Tested</div>
+    <div class="stat-value">1</div>
+    <div class="stat-sub">concurrency levels</div>
+  </div>
+</div>
+
+<h2>System Information</h2>
+<div class="grid-2">
+  <div class="card">
+    <h3>Environment</h3>
+    <div class="info-grid">
+      <div class="info-row"><span class="info-key">Python</span><span class="info-val">?</span></div>
+      <div class="info-row"><span class="info-key">Platform</span><span class="info-val">Linux-6.8.0-1047-aws-x86_64-with-glibc2.35</span></div>
+      <div class="info-row"><span class="info-key">CPU cores</span><span class="info-val">?</span></div>
+      <div class="info-row"><span class="info-key">RAM</span><span class="info-val">? GB</span></div>
+    </div>
+  </div>
+  <div class="card">
+    <h3>Inference Device</h3>
+    <div class="info-grid">
+      <div class="info-row"><span class="info-key">Device</span><span class="info-val">cuda</span></div>
+      <div class="info-row"><span class="info-key">FP16</span><span class="info-val">True</span></div>
+      <div class="info-row"><span class="info-key">GPU</span><span class="info-val">Tesla T4</span></div>
+      <div class="info-row"><span class="info-key">VRAM</span><span class="info-val">15.6 GB</span></div>
+    </div>
+  </div>
+</div>
+
+<h2>Performance Charts</h2>
+<div class="chart-grid">
+  <div class="chart-card">
+    <h3>Tick Latency vs Concurrency</h3>
+    <canvas id="tickChart"></canvas>
+  </div>
+  <div class="chart-card">
+    <h3>YOLO Batch Latency vs Concurrency</h3>
+    <canvas id="yoloChart"></canvas>
+  </div>
+  <div class="chart-card">
+    <h3>CPU Usage vs Concurrency</h3>
+    <canvas id="cpuChart"></canvas>
+  </div>
+  <div class="chart-card">
+    <h3>10 Hz Maintenance vs Concurrency</h3>
+    <canvas id="hzChart"></canvas>
+  </div>
+  
+        <div class="chart-card">
+          <h3>GPU Utilisation vs Concurrency</h3>
+          <canvas id="gpuChart"></canvas>
+        </div>
+        <div class="chart-card">
+          <h3>VRAM Usage vs Concurrency</h3>
+          <canvas id="vramChart"></canvas>
+        </div>
+  
+        <div class="chart-card">
+          <h3>MediaPipe &amp; Audio VAD Latency vs Concurrency</h3>
+          <canvas id="mpAudioChart"></canvas>
+        </div>
+</div>
+
+<h2>Detailed Results Table</h2>
+<div class="card" style="overflow-x:auto">
+  <table>
+    <thead>
+      <tr>
+        <th>Clients</th><th>Connected</th>
+        <th>Tick Avg(ms)</th><th>Tick P95(ms)</th>
+        <th>YOLO Avg(ms)</th><th>YOLO P95(ms)</th>
+        <th>MP Avg(ms)</th><th>VAD Avg(ms)</th>
+        <th>CPU Avg</th><th>RAM(MB)</th>
+        <th>GPU</th><th>VRAM</th>
+        <th>Eff. Hz</th><th>10Hz OK</th>
+      </tr>
+    </thead>
+    <tbody>
+        <tr>
+          <td>4</td>
+          <td>4</td>
+          <td>65.1</td>
+          <td>72.8</td>
+          <td>57.6</td>
+          <td>58.5</td>
+          <td>58.7</td>
+          <td>1.4</td>
+          <td>37.1%</td>
+          <td>2188</td>
+          <td>14.6%</td>
+          <td>65MB</td>
+          <td>15.3</td>
+          <td style="color:#22c55e;font-weight:bold">✓ 98%</td>
+        </tr></tbody>
+  </table>
+</div>
+
+<h2>Bottleneck Analysis</h2>
+<div class="grid-2">
+  <div class="card">
+    <h3>Resource Saturation Points</h3>
+    <table>
+      <thead><tr><th>Resource</th><th>Saturates</th><th>Threshold</th></tr></thead>
+      <tbody><tr><td>CPU</td><td>not reached</td><td>85%</td></tr><tr><td>TICK</td><td>not reached</td><td>95% ok</td></tr><tr><td>YOLO</td><td>not reached</td><td>200ms</td></tr><tr><td>RAM</td><td>not reached</td><td>—MB</td></tr><tr><td>GPU</td><td>not reached</td><td>85%</td></tr></tbody>
+    </table>
+  </div>
+  <div class="card">
+    <h3>Recommendations</h3>
+    <div style="font-size:0.85rem;line-height:1.8">
+      <p>• <strong>Max safe concurrency</strong>: <span style="color:#22c55e">4 clients</span></p>
+      <p>• <strong>Primary bottleneck</strong>: NONE_DETECTED saturates first</p>
+      <p>• Consider scaling horizontally if NONE_DETECTED is the limit</p>
+      <p>• Tick degradation begins around None clients</p>
+    </div>
+  </div>
+</div>
+
+<script>
+const lineOpts = (yLabel, sugMax) => ({
+  responsive: true,
+  plugins: { legend: { labels: { color: '#94a3b8' } } },
+  scales: {
+    x: { ticks: { color: '#64748b' }, grid: { color: '#1e293b' }, title: { display:true, text:'Concurrent Clients', color:'#64748b' } },
+    y: { ticks: { color: '#64748b' }, grid: { color: '#1e293b' },
+         title: { display:true, text:yLabel, color:'#64748b' },
+         ...(sugMax ? {suggestedMax: sugMax} : {}) }
+  }
+});
+
+new Chart(document.getElementById('tickChart'), {
+  type: 'line',
+  data: {
+    labels: ["4"],
+    datasets: [
+      {label:'Tick Avg (ms)', data:[65.14], borderColor:'#60a5fa', backgroundColor:'#60a5fa20', fill:true, tension:0.3},
+      {label:'Tick P95 (ms)', data:[72.75], borderColor:'#f87171', borderDash:[5,5], tension:0.3},
+      {label:'100ms limit',   data:[100], borderColor:'#ef444466', borderDash:[3,3], pointRadius:0}
+    ]
+  }, options: lineOpts('Latency (ms)', 200)
+});
+
+new Chart(document.getElementById('yoloChart'), {
+  type: 'line',
+  data: {
+    labels: ["4"],
+    datasets: [
+      {label:'YOLO Avg (ms)', data:[57.62], borderColor:'#a78bfa', backgroundColor:'#a78bfa20', fill:true, tension:0.3},
+      {label:'YOLO P95 (ms)', data:[58.5], borderColor:'#f59e0b', borderDash:[5,5], tension:0.3}
+    ]
+  }, options: lineOpts('Latency (ms)')
+});
+
+new Chart(document.getElementById('cpuChart'), {
+  type: 'line',
+  data: {
+    labels: ["4"],
+    datasets: [
+      {label:'CPU Avg %', data:[37.11], borderColor:'#34d399', backgroundColor:'#34d39920', fill:true, tension:0.3},
+      {label:'CPU Max %', data:[38.4], borderColor:'#f87171', borderDash:[5,5], tension:0.3},
+      {label:'85% threshold', data:[85], borderColor:'#ef444466', borderDash:[3,3], pointRadius:0}
+    ]
+  }, options: lineOpts('CPU (%)', 100)
+});
+
+new Chart(document.getElementById('hzChart'), {
+  type: 'bar',
+  data: {
+    labels: ["4"],
+    datasets: [
+      {label:'10Hz maintained %', data:[98.3],
+        backgroundColor: [98.3].map(v => v>=95?'#22c55e':v>=80?'#f59e0b':'#ef4444')}
+    ]
+  },
+  options: {
+    ...lineOpts('% of ticks within 100ms', 100),
+    plugins: { legend: { labels: { color:'#94a3b8' } } }
+  }
+});
+
+
+        new Chart(document.getElementById('gpuChart'), {
+          type: 'line', data: {
+            labels: ["4"],
+            datasets: [{label:'GPU Avg %', data:[14.57], borderColor:'#06b6d4', backgroundColor:'#06b6d420', fill:true, tension:0.3}]
+          }, options: lineOpts('GPU Utilisation (%)', 100)
+        });
+        new Chart(document.getElementById('vramChart'), {
+          type: 'line', data: {
+            labels: ["4"],
+            datasets: [{label:'VRAM Avg MB', data:[65.03], borderColor:'#8b5cf6', backgroundColor:'#8b5cf620', fill:true, tension:0.3}]
+          }, options: lineOpts('VRAM (MB)')
+        });
+
+        new Chart(document.getElementById('mpAudioChart'), {
+          type: 'line', data: {
+            labels: ["4"],
+            datasets: [{label:'MediaPipe Avg (ms)', data:[58.67], borderColor:'#fb923c', backgroundColor:'#fb923c20', fill:true, tension:0.3}, {label:'MediaPipe P95 (ms)', data:[59.5], borderColor:'#f97316', borderDash:[5,5], tension:0.3}, {label:'Audio VAD Avg (ms)', data:[1.4], borderColor:'#4ade80', backgroundColor:'#4ade8020', fill:false, tension:0.3}, {label:'Audio VAD P95 (ms)', data:[1.7], borderColor:'#22c55e', borderDash:[5,5], tension:0.3}]
+          }, options: lineOpts('Latency (ms)')
+        });
+</script>
+</body>
+</html>

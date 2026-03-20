@@ -166,11 +166,19 @@ class ObjectDetector:
         half:          bool  = False,   # disabled by default — opt-in for confirmed GPU setups
         warmup_frames: int   = 0,       # disabled by default — avoids blocking event loop at startup
         min_vram_gb:   float = 1.5,     # auto-mode: fall back to CPU below this free VRAM
+        imgsz:         int   = 640,     # inference resolution; set at load time, NOT at call time
     ):
         # Resolve device with VRAM safety check
         self.device, _reason = _resolve_device(device, min_vram_gb)
         self.model = YOLO(model_path)
         self.model.to(self.device)
+
+        # Set inference resolution at load time — safe for batch mode.
+        # NEVER pass imgsz at inference time: it breaks orig_shape tracking in
+        # Ultralytics batch mode and shifts all bboxes to wrong pixel positions.
+        if imgsz != 640:
+            self.model.overrides['imgsz'] = imgsz
+            logger.info("ObjectDetector: inference imgsz set to %d (load-time override)", imgsz)
 
         # FP16: CUDA only — CPU half-precision is slower; MPS float16 support
         # is still maturing across PyTorch versions so we keep MPS on FP32.

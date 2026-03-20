@@ -58,18 +58,20 @@ class ProctorCoordinator:
 
     def __init__(
         self,
-        model_path:    str   = "finalBestV5.pt",
-        max_sessions:  int   = 5,
-        tick_rate:     int   = TICK_RATE,
-        device:        str   = "cpu",
-        default_conf:  float = 0.50,
-        person_conf:   float = 0.30,
-        phone_conf:    float = 0.65,
-        book_conf:     float = 0.70,
-        audio_conf:    float = 0.41,
-        half:          bool  = False,
-        warmup_frames: int   = 0,
-        min_vram_gb:   float = 1.5,
+        model_path:       str   = "finalBestV5.pt",
+        max_sessions:     int   = 5,
+        tick_rate:        int   = TICK_RATE,
+        device:           str   = "cpu",
+        default_conf:     float = 0.50,
+        person_conf:      float = 0.30,
+        phone_conf:       float = 0.65,
+        book_conf:        float = 0.70,
+        audio_conf:       float = 0.41,
+        half:             bool  = False,
+        warmup_frames:    int   = 0,
+        min_vram_gb:      float = 1.5,
+        imgsz:            int   = 640,
+        mediapipe_stride: int   = 1,
     ):
         self.detector = ObjectDetector(
             model_path    = model_path,
@@ -82,9 +84,11 @@ class ProctorCoordinator:
             half          = half,
             warmup_frames = warmup_frames,
             min_vram_gb   = min_vram_gb,
+            imgsz         = imgsz,
         )
-        self.max_sessions = max_sessions
-        self.tick_rate    = tick_rate
+        self.max_sessions      = max_sessions
+        self.tick_rate         = tick_rate
+        self.mediapipe_stride  = mediapipe_stride
 
         # pc_id → ProctorSession
         self.sessions: dict[str, ProctorSession] = {}
@@ -93,12 +97,14 @@ class ProctorCoordinator:
         # All sessions hold a reference to this dict, so changes apply immediately.
         self.exam_config: dict = {}
 
-        # Dedicated thread pool for parallel MediaPipe calls.
-        # On GPU the YOLO batch finishes fast (~15ms), so all N MediaPipe calls
-        # start in parallel.  MediaPipe releases the GIL during C++ compute, so
-        # true parallelism is achieved up to the number of physical CPU cores.
-        # Cap at 32 to match RTX PRO 4500 vCPU allocation; min 8 on any GPU pod.
-        _mp_workers = min(max(max_sessions, 8), 32)
+        # Thread pool for MediaPipe (FaceMesh → HeadPose → Lip).
+        # MediaPipe doesn't release the GIL so threads run serially, but the pool
+        # still frees the asyncio event loop during inference — and with stride=3
+        # only ceil(N/3) sessions need fresh MP per tick, keeping the serial cost low.
+        # At 5 sessions / stride 3 = 2 sessions per tick × ~15ms = ~30ms total.
+        # YOLO runs on GPU concurrently with this, so the wall-clock overhead is
+        # max(YOLO_ms, MP_ms) — they overlap.
+        _mp_workers = min(max(max_sessions, 4), 8)
         self._mp_pool = ThreadPoolExecutor(
             max_workers=_mp_workers,
             thread_name_prefix="mediapipe",
@@ -110,6 +116,7 @@ class ProctorCoordinator:
         # Diagnostics
         self._last_tick_ms: float = 0.0
         self._tick_count:   int   = 0
+        self._global_tick:  int   = 0   # used for MediaPipe stagger rotation
 
     # ── Lifecycle ─────────────────────────────────────────────────────────────
 
@@ -190,7 +197,7 @@ class ProctorCoordinator:
             await asyncio.sleep(sleep)
 
     async def _tick(self, loop: asyncio.AbstractEventLoop) -> None:
-        # 1. Snapshot sessions — skip terminated ones (no more scoring needed)
+        # ── 1. Snapshot active, non-terminated sessions ────────────────────────
         snapshot = {
             pc_id: session
             for pc_id, session in list(self.sessions.items())
@@ -205,32 +212,42 @@ class ProctorCoordinator:
         fps_vals = [s.observed_fps  for s in sessions]
         now      = time.time()
 
-        # 2. Batch YOLO — one forward pass for all N frames
-        batch_detections: list[list[dict]] = await loop.run_in_executor(
-            None,
-            self.detector.detect_batch,
-            frames,
-        )
-
-        # 3. Parallel MediaPipe — only for sessions that actually need it.
-        # If ALL face/head/lip detections are disabled for a session, skip
-        # FaceMesh + HeadPoseDetector + LipDetector entirely: no thread-pool
-        # dispatch, no C++ compute — just an already-resolved future with _NULL_MP.
+        # ── 2. YOLO batch + MediaPipe — submit CONCURRENTLY ───────────────────
+        #
+        # YOLO is GPU-bound. While the GPU runs inference the CPU is free to run
+        # MediaPipe. Submitting both at the same time and awaiting together gives
+        # wall-clock cost = max(YOLO_ms, MP_ms) instead of YOLO_ms + MP_ms.
+        #
+        # MediaPipe stride: only ceil(N/stride) sessions get fresh MP per tick.
+        # Skipped sessions reuse their last known result (_last_mp_result).
+        # Duration gates (1.5–2 s) tolerate stale MP data at 3.3 Hz per session.
+        stride    = max(1, self.mediapipe_stride)
         mp_tasks  = []
         mp_needed = 0
-        for session, frame in zip(sessions, frames):
-            if session.needs_mediapipe():
+
+        for i, (session, frame) in enumerate(zip(sessions, frames)):
+            run_mp_this_tick = (i % stride == self._global_tick % stride)
+            if session.needs_mediapipe() and run_mp_this_tick:
                 mp_tasks.append(
                     loop.run_in_executor(self._mp_pool, session.run_mediapipe, frame)
                 )
                 mp_needed += 1
             else:
+                # Reuse last known result — zero compute cost this tick
                 f = loop.create_future()
-                f.set_result(_NULL_MP)
+                last = getattr(session, "_last_mp_result", None)
+                f.set_result(last if last is not None else _NULL_MP)
                 mp_tasks.append(f)
 
-        mp_t0      = time.perf_counter()
-        mp_results = await asyncio.gather(*mp_tasks)
+        self._global_tick += 1
+
+        # Await YOLO (GPU) and MediaPipe (CPU) concurrently
+        mp_t0 = time.perf_counter()
+        batch_detections, mp_results = await asyncio.gather(
+            loop.run_in_executor(None, self.detector.detect_batch, frames),
+            asyncio.gather(*mp_tasks),
+        )
+
         if mp_needed > 0:
             mp_elapsed_ms = (time.perf_counter() - mp_t0) * 1000
             try:
@@ -239,7 +256,7 @@ class ProctorCoordinator:
             except Exception:
                 pass
 
-        # 4. Per-user state update — sequential (fast CPU work)
+        # ── 3. Per-session state update — sequential (fast CPU work) ──────────
         for session, raw_dets, mp_result, frame, fps in zip(
             sessions, batch_detections, mp_results, frames, fps_vals
         ):

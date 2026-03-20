@@ -23,6 +23,15 @@ import argparse
 import logging
 import uvicorn
 
+# uvloop replaces asyncio's default event loop with libuv — significantly lower
+# per-coroutine overhead.  Optional dep: falls back silently if not installed.
+try:
+    import uvloop
+    uvloop.install()
+    logging.getLogger("main").info("uvloop installed — using libuv event loop")
+except ImportError:
+    pass
+
 logger = logging.getLogger("main")
 
 KEY_FILE  = Path.home() / "key.pem"

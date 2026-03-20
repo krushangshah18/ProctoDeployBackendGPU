@@ -64,21 +64,25 @@ async def lifespan(app: FastAPI):
         _device       = os.getenv("PROCTOR_DEVICE")  or _session_config.get("YOLO_DEVICE",        "cpu")
         _half         = os.getenv("PROCTOR_HALF")    == "1" if os.getenv("PROCTOR_HALF") else _session_config.get("YOLO_HALF",         False)
         _warmup       = int(os.getenv("PROCTOR_WARMUP")) if os.getenv("PROCTOR_WARMUP") else _session_config.get("YOLO_WARMUP_FRAMES", 0)
-        _min_vram     = _session_config.get("YOLO_MIN_VRAM_GB", 1.5)
+        _min_vram     = _session_config.get("YOLO_MIN_VRAM_GB",    1.5)
+        _imgsz        = _session_config.get("YOLO_IMGSZ",          640)
+        _mp_stride    = _session_config.get("MEDIAPIPE_STRIDE",     1)
 
         coordinator = ProctorCoordinator(
-            model_path     = _session_config["YOLO_MODEL_PATH"],
-            max_sessions   = MAX_CONNECTIONS,
-            tick_rate      = _session_config.get("TICK_RATE", 10),
-            device         = _device,
-            default_conf   = _session_config.get("YOLO_DEFAULT_CONF", 0.50),
-            person_conf    = _session_config.get("YOLO_PERSON_CONF",  0.30),
-            phone_conf     = _session_config.get("YOLO_PHONE_CONF",   0.65),
-            book_conf      = _session_config.get("YOLO_BOOK_CONF",    0.70),
-            audio_conf     = _session_config.get("YOLO_AUDIO_CONF",   0.41),
-            half           = _half,
-            warmup_frames  = _warmup,
-            min_vram_gb    = _min_vram,
+            model_path        = _session_config["YOLO_MODEL_PATH"],
+            max_sessions      = MAX_CONNECTIONS,
+            tick_rate         = _session_config.get("TICK_RATE", 10),
+            device            = _device,
+            default_conf      = _session_config.get("YOLO_DEFAULT_CONF", 0.50),
+            person_conf       = _session_config.get("YOLO_PERSON_CONF",  0.30),
+            phone_conf        = _session_config.get("YOLO_PHONE_CONF",   0.65),
+            book_conf         = _session_config.get("YOLO_BOOK_CONF",    0.70),
+            audio_conf        = _session_config.get("YOLO_AUDIO_CONF",   0.41),
+            half              = _half,
+            warmup_frames     = _warmup,
+            min_vram_gb       = _min_vram,
+            imgsz             = _imgsz,
+            mediapipe_stride  = _mp_stride,
         )
         await coordinator.start()
         logger.info("ProctorCoordinator started (max=%d  device=%s  half=%s  warmup=%d)",
