@@ -1,8 +1,8 @@
 # AI Proctor — Complete Project Documentation
 
 > **Read this first in any new session.** This file covers the full system architecture,
-> every implementation decision made, all known bugs and fixes, resource profiling results,
-> and exactly what needs to be done next for the GPU-hosted production version.
+> every implementation decision made, all known bugs and fixes, and resource profiling results.
+> **Status: GPU production build — CUDA required, CPU/MPS paths removed.**
 
 ---
 

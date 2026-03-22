@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import Link from "next/link";
-import { api } from "@/lib/api";
+import { createApi, BACKEND_URLS } from "@/lib/api";
 import type { MetricsSnapshot, SystemReport, EndpointMetric } from "@/lib/types";
 
 // ── Tiny helpers ──────────────────────────────────────────────────────────────
@@ -12,9 +12,9 @@ function fmt(n: number | undefined, decimals = 1) {
   return n.toFixed(decimals);
 }
 
-function pct(used: number, total: number) {
-  if (!total) return 0;
-  return Math.min(100, (used / total) * 100);
+function portLabel(url: string): string {
+  try { return `:${new URL(url).port || "80"}`; }
+  catch { return url; }
 }
 
 // ── Reusable primitives ───────────────────────────────────────────────────────
@@ -157,30 +157,37 @@ function ReportPanel({ report }: { report: SystemReport }) {
 // ── Main page ─────────────────────────────────────────────────────────────────
 
 export default function MonitorPage() {
-  const [metrics, setMetrics]       = useState<MetricsSnapshot | null>(null);
-  const [report,  setReport]        = useState<SystemReport | null>(null);
-  const [tab,     setTab]           = useState<"live" | "report">("live");
-  const [autoRefresh, setAutoRefresh] = useState(true);
-  const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
-  const [loadingReport, setLoadingReport] = useState(false);
-  const [error, setError]           = useState("");
+  const [activeInstance, setActiveInstance] = useState(0);
+  const [metrics, setMetrics]               = useState<MetricsSnapshot | null>(null);
+  const [report,  setReport]                = useState<SystemReport | null>(null);
+  const [tab,     setTab]                   = useState<"live" | "report">("live");
+  const [autoRefresh, setAutoRefresh]       = useState(true);
+  const [lastUpdated, setLastUpdated]       = useState<Date | null>(null);
+  const [loadingReport, setLoadingReport]   = useState(false);
+  const [error, setError]                   = useState("");
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
+  // Reset per-instance state when the selected instance changes.
+  useEffect(() => {
+    setReport(null);
+    setError("");
+  }, [activeInstance]);
 
   const fetchMetrics = useCallback(async () => {
     try {
-      const m = await api.getMetrics();
+      const m = await createApi(BACKEND_URLS[activeInstance]).getMetrics();
       setMetrics(m);
       setLastUpdated(new Date());
       setError("");
     } catch {
       setError("Backend unreachable — retrying…");
     }
-  }, []);
+  }, [activeInstance]);
 
   const fetchReport = useCallback(async () => {
     setLoadingReport(true);
     try {
-      const r = await api.getSystemReport();
+      const r = await createApi(BACKEND_URLS[activeInstance]).getSystemReport();
       setReport(r);
       setError("");
     } catch {
@@ -188,9 +195,9 @@ export default function MonitorPage() {
     } finally {
       setLoadingReport(false);
     }
-  }, []);
+  }, [activeInstance]);
 
-  // Auto-refresh metrics every 3 s
+  // Auto-refresh metrics every 3 s. Re-runs when fetchMetrics changes (i.e. instance changes).
   useEffect(() => {
     fetchMetrics();
     if (autoRefresh) {
@@ -204,8 +211,8 @@ export default function MonitorPage() {
     if (tab === "report" && !report) fetchReport();
   }, [tab, report, fetchReport]);
 
-  const m = metrics;
-  const sys = m?.system;
+  const m      = metrics;
+  const sys    = m?.system;
   const gpuAvail = sys && sys.gpu_mem_total_mb > 0;
 
   const downloadReport = () => {
@@ -214,7 +221,7 @@ export default function MonitorPage() {
     const url  = URL.createObjectURL(blob);
     const a    = document.createElement("a");
     a.href     = url;
-    a.download = `proctor-system-report-${new Date().toISOString().slice(0, 19)}.json`;
+    a.download = `proctor-report-instance${activeInstance + 1}-${new Date().toISOString().slice(0, 19)}.json`;
     a.click();
     URL.revokeObjectURL(url);
   };
@@ -263,18 +270,45 @@ export default function MonitorPage() {
         </div>
       </header>
 
-      {/* Tabs */}
-      <div className="flex border-b px-6" style={{ borderColor: "var(--border)", background: "var(--surface)" }}>
-        {(["live", "report"] as const).map(t => (
-          <button key={t} onClick={() => setTab(t)}
-            className="px-4 py-3 text-sm font-semibold capitalize border-b-2 transition-colors"
-            style={{
-              borderColor: tab === t ? "#2563eb" : "transparent",
-              color      : tab === t ? "#2563eb" : "var(--muted)",
-            }}>
-            {t === "live" ? "Live Metrics" : "System Report"}
-          </button>
-        ))}
+      {/* Tabs row: Live Metrics / System Report  +  Instance selector */}
+      <div className="flex items-center justify-between border-b px-6"
+        style={{ borderColor: "var(--border)", background: "var(--surface)" }}>
+
+        {/* Page tabs */}
+        <div className="flex">
+          {(["live", "report"] as const).map(t => (
+            <button key={t} onClick={() => setTab(t)}
+              className="px-4 py-3 text-sm font-semibold capitalize border-b-2 transition-colors"
+              style={{
+                borderColor: tab === t ? "#2563eb" : "transparent",
+                color      : tab === t ? "#2563eb" : "var(--muted)",
+              }}>
+              {t === "live" ? "Live Metrics" : "System Report"}
+            </button>
+          ))}
+        </div>
+
+        {/* Instance selector — only shown when 2+ backends are configured */}
+        {BACKEND_URLS.length > 1 && (
+          <div className="flex items-center gap-2">
+            <span className="text-xs" style={{ color: "var(--muted)" }}>Instance:</span>
+            <div className="flex gap-1 p-0.5 rounded-lg" style={{ background: "var(--surface2)", border: "1px solid var(--border)" }}>
+              {BACKEND_URLS.map((url, i) => (
+                <button
+                  key={url}
+                  onClick={() => setActiveInstance(i)}
+                  className="px-3 py-1 text-xs font-semibold rounded-md transition-colors font-mono"
+                  style={{
+                    background: activeInstance === i ? "#1d4ed8" : "transparent",
+                    color     : activeInstance === i ? "#fff"    : "var(--muted)",
+                  }}
+                >
+                  {portLabel(url)}
+                </button>
+              ))}
+            </div>
+          </div>
+        )}
       </div>
 
       {error && (
@@ -315,14 +349,14 @@ export default function MonitorPage() {
                 {/* System resources */}
                 <SectionTitle>System Resources</SectionTitle>
                 <div className={`grid gap-3 ${gpuAvail ? "grid-cols-2 lg:grid-cols-4" : "grid-cols-2"}`}>
-                  <GaugeBar label="CPU Usage"   value={sys!.cpu_percent}     max={100}  unit="%" color="#6366f1" />
-                  <GaugeBar label="Memory (RSS)" value={sys!.mem_rss_mb}     max={Math.max(sys!.mem_rss_mb * 1.5, 512)} unit=" MB" color="#06b6d4" />
+                  <GaugeBar label="CPU Usage"    value={sys!.cpu_percent}     max={100}  unit="%" color="#6366f1" />
+                  <GaugeBar label="Memory (RSS)" value={sys!.mem_rss_mb}      max={Math.max(sys!.mem_rss_mb * 1.5, 512)} unit=" MB" color="#06b6d4" />
                   {gpuAvail && <>
-                    <GaugeBar label="GPU Utilisation" value={sys!.gpu_util_pct}   max={100} unit="%" color="#a855f7" />
-                    <GaugeBar label="GPU VRAM"        value={sys!.gpu_mem_used_mb} max={sys!.gpu_mem_total_mb} unit=" MB" color="#ec4899" />
+                    <GaugeBar label="GPU Utilisation" value={sys!.gpu_util_pct}    max={100} unit="%" color="#a855f7" />
+                    <GaugeBar label="GPU VRAM"         value={sys!.gpu_mem_used_mb} max={sys!.gpu_mem_total_mb} unit=" MB" color="#ec4899" />
                   </>}
                   {!gpuAvail && (
-                    <div className="rounded-xl p-4 flex items-center justify-center col-span-0"
+                    <div className="rounded-xl p-4 flex items-center justify-center"
                       style={{ background: "var(--surface)", border: "1px solid var(--border)" }}>
                       <p className="text-xs" style={{ color: "var(--muted)" }}>GPU: not available (CPU mode)</p>
                     </div>
@@ -399,7 +433,7 @@ export default function MonitorPage() {
                 {/* Perf snapshot from system report */}
                 <SectionTitle>Performance Snapshot</SectionTitle>
                 <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-                  <StatCard label="Uptime"        value={report.uptime} />
+                  <StatCard label="Uptime"         value={report.uptime} />
                   <StatCard label="Total Sessions" value={report.sessions?.total_created ?? "—"} />
                   <StatCard label="Total Alerts"   value={report.events?.alerts_total ?? "—"}
                     color={(report.events?.alerts_total ?? 0) > 0 ? "#ef4444" : "var(--muted)"} />

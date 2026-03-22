@@ -26,20 +26,6 @@ from core.audio_monitor import AudioMonitor, SpeakerAudioDetector
 from core.object_tracker import ObjectTemporalTracker
 from utils import AlertManager, ProofWriter
 
-class _FakeLandmark:
-    """
-    Duck-type MediaPipe NormalizedLandmark — supports landmarks[i].x/y/z access.
-    Used to pass deserialized float32 landmark arrays to HeadPoseDetector and
-    LipDetector, which only access landmarks via attribute lookup (lm.x, lm.y, lm.z).
-    """
-    __slots__ = ("x", "y", "z")
-
-    def __init__(self, x: float, y: float, z: float) -> None:
-        self.x = float(x)
-        self.y = float(y)
-        self.z = float(z)
-
-
 _DEFAULTS = {
     "DETECT_LOOKING_AWAY"    : True,
     "DETECT_LOOKING_DOWN"    : True,
@@ -146,7 +132,19 @@ class ProctorSession:
         # ── Detectors ─────────────────────────────────────────────────────────
         refine_landmarks = cfg.get("DETECT_LOOKING_SIDE", True)
         self._face_mesh    = FaceMeshProvider(refine_landmarks=refine_landmarks)
-        self.head_detector = HeadPoseDetector(debug=False, own_mesh=False)
+        self.head_detector = HeadPoseDetector(
+            debug=False, own_mesh=False,
+            min_face_width       = cfg.get("MIN_FACE_WIDTH"),
+            min_face_height      = cfg.get("MIN_FACE_HEIGHT"),
+            look_away_yaw        = cfg.get("LOOK_AWAY_YAW"),
+            look_down_pitch      = cfg.get("LOOK_DOWN_PITCH"),
+            look_up_pitch        = cfg.get("LOOK_UP_PITCH"),
+            gaze_left            = cfg.get("GAZE_LEFT"),
+            gaze_right           = cfg.get("GAZE_RIGHT"),
+            ear_threshold        = cfg.get("EAR_THRESHOLD"),
+            blink_min_duration_s = cfg.get("BLINK_MIN_DURATION_S"),
+            blink_max_duration_s = cfg.get("BLINK_MAX_DURATION_S"),
+        )
         self.lip_detector  = LipDetector(own_mesh=False)
 
         # ── State machines ────────────────────────────────────────────────────
@@ -155,7 +153,7 @@ class ProctorSession:
         vote_ratios   = {
             "phone"    : float(cfg["PHONE_MIN_VOTES"])  / window_frames,
             "book"     : float(cfg["BOOK_MIN_VOTES"])   / window_frames,
-            "headphone": float(cfg["EARBUD_MIN_VOTES"]) / window_frames,
+            "headphone": float(cfg["HEADPHONE_MIN_VOTES"]) / window_frames,
             "earbud"   : float(cfg["EARBUD_MIN_VOTES"]) / window_frames,
             "default"  : float(cfg["OBJECT_MIN_VOTES"]) / window_frames,
         }
@@ -197,10 +195,6 @@ class ProctorSession:
         self.debug_mode: bool           = False
         self._last_mp_result: tuple | None = None
         self._last_detections: list      = []
-
-        # Cached landmark bytes from ProcessPoolExecutor FaceMesh phase.
-        # Reused on ticks where this session is skipped by the MediaPipe stride.
-        self._last_lm_bytes: bytes | None = None
 
         # Tracks the last wall-clock time face landmarks were actively detected.
         # Used to gate face_hidden: only fires within FACE_HIDDEN_RECENCY_S after
@@ -405,18 +399,13 @@ class ProctorSession:
         """Return True if at least one enabled detection requires MediaPipe."""
         return any(self._detect(k) for k in self._MEDIAPIPE_FLAGS)
 
-    # ── MediaPipe (thread pool — legacy path kept for compatibility) ──────────
+    # ── MediaPipe (runs in ThreadPoolExecutor, called by coordinator per tick) ─
 
     def run_mediapipe(self, frame: np.ndarray) -> tuple:
         """
         Run FaceMesh → HeadPoseDetector → LipDetector on *frame*.
         Skipped entirely (null result) if no enabled detection needs it —
         saves ~15–40 ms per tick and one thread-pool slot per session.
-
-        NOTE: The coordinator now uses the two-phase approach:
-          Phase 1 — extract_landmarks() in ProcessPoolExecutor (true parallelism)
-          Phase 2 — run_headpose_lip() inline in the event loop
-        This method is retained for fallback / single-session testing.
         """
         from detectors.lip_detector import LipState
 
@@ -425,40 +414,6 @@ class ProctorSession:
 
         ts          = time.monotonic() - self.session_clock
         landmarks   = self._face_mesh.process(frame)
-        head_result = self.head_detector.detect(frame, draw=False, landmarks=landmarks)
-        lip_result  = self.lip_detector.process(frame, ts, draw=False, landmarks=landmarks)
-        return head_result, lip_result
-
-    # ── MediaPipe Phase 2 — HeadPose + Lip with pre-computed landmarks ────────
-
-    def run_headpose_lip(self, frame: np.ndarray, landmarks_bytes: "bytes | None") -> tuple:
-        """
-        Phase 2 of the two-phase MediaPipe pipeline.
-
-        Called in the asyncio event loop (not a thread pool) after Phase 1
-        (FaceMesh in ProcessPoolExecutor) has returned serialized landmarks.
-
-        Args:
-            frame:           Full-resolution BGR frame (e.g. 640×480).
-            landmarks_bytes: float32 bytes of shape (N, 3) from extract_landmarks(),
-                             or None if no face was detected.
-
-        Returns:
-            (head_result, lip_result) — same shape as run_mediapipe().
-        """
-        from detectors.lip_detector import LipState
-
-        if not self.needs_mediapipe():
-            return (self._NULL_HEAD, LipState(face_detected=False))
-
-        # Deserialize landmarks — duck-type objects matching the MediaPipe API
-        landmarks: list | None = None
-        if landmarks_bytes is not None:
-            arr = np.frombuffer(landmarks_bytes, dtype=np.float32).reshape(-1, 3)
-            landmarks = [_FakeLandmark(arr[i, 0], arr[i, 1], arr[i, 2])
-                         for i in range(len(arr))]
-
-        ts          = time.monotonic() - self.session_clock
         head_result = self.head_detector.detect(frame, draw=False, landmarks=landmarks)
         lip_result  = self.lip_detector.process(frame, ts, draw=False, landmarks=landmarks)
         return head_result, lip_result
@@ -684,16 +639,16 @@ class ProctorSession:
         })
 
     def _handle_event(self, rev, frame: np.ndarray, now: float) -> None:
+        # Track alert_log length before so we know if a new entry was just added.
+        prev_alert_count = len(self.alert_log)
         self.alert_engine.handle(rev, self._alert_manager)
-
-        if rev.risk_added > 0 and self.alert_log:
-            self.alert_log[-1]["score_added"] = round(rev.risk_added, 2)
+        alert_was_logged = len(self.alert_log) > prev_alert_count
 
         # ── Proof capture ─────────────────────────────────────────────────────
         proof_url: str | None = None
 
         if self.proof_writer is not None:
-            save = (rev.terminated and not self._termination_proved) or rev.risk_added > 0
+            save = (rev.terminated and not self._termination_proved) or alert_was_logged
             if save:
                 if rev.terminated:
                     self._termination_proved = True
@@ -706,7 +661,7 @@ class ProctorSession:
                         proof_url = f"/proof/{rel.as_posix()}"
                     except ValueError:
                         proof_url = None
-                    if self.alert_log:
+                    if alert_was_logged:
                         self.alert_log[-1]["proof"] = path
                         if proof_url:
                             self.alert_log[-1]["proof_url"] = proof_url

@@ -161,9 +161,7 @@ COMBO_DOWN_BOOK  : float = 15.0   # looking_down + book
 COMBO_PHONE_DOWN : float = 20.0   # phone + looking_down
 
 # ── Tab switch — exam page left / window hidden (non-decaying) ─────────────────
-# Termination rule: >= TAB_SWITCH_TERMINATE_COUNT switches → exam auto-terminated.
-# Occurrence 1            → warn only (grace)
-# Occurrence 2            → +TAB_SWITCH_SCORE pts fixed  (alert)
-# Occurrence >= TERMINATE → TERMINATED immediately
-TAB_SWITCH_SCORE           : float = 15.0   # score added from 2nd occurrence onward
+# Every occurrence        → +TAB_SWITCH_SCORE pts fixed (alert) — no grace.
+# >= TERMINATE_COUNT      → exam auto-terminated immediately.
+TAB_SWITCH_SCORE           : float = 15.0   # score added on every occurrence
 TAB_SWITCH_TERMINATE_COUNT : int   = 3      # number of switches that trigger termination

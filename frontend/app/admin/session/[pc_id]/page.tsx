@@ -1,9 +1,11 @@
 "use client";
 
+import { Suspense } from "react";
 import { useEffect, useRef, useState, useCallback } from "react";
 import { use } from "react";
+import { useSearchParams } from "next/navigation";
 import Link from "next/link";
-import { api } from "@/lib/api";
+import { createApi } from "@/lib/api";
 import type { SSEEvent, RiskInfo, AlertEntry, WarningEntry } from "@/lib/types";
 
 const RISK_COLORS: Record<string, string> = {
@@ -14,8 +16,6 @@ const RISK_COLORS: Record<string, string> = {
   TERMINATED  : "#7f1d1d",
 };
 
-const BASE = process.env.NEXT_PUBLIC_BACKEND_URL || "http://localhost:8000";
-
 function RiskBadge({ state }: { state: string }) {
   const color = RISK_COLORS[state] ?? "#22c55e";
   return (
@@ -25,18 +25,18 @@ function RiskBadge({ state }: { state: string }) {
   );
 }
 
-function ProofMedia({ url, type }: { url: string; type?: string }) {
+function ProofMedia({ url, type, base }: { url: string; type?: string; base: string }) {
   if (type === "audio") {
     return (
       <audio controls className="w-full mt-2 h-8" style={{ filter: "invert(1) hue-rotate(180deg)" }}>
-        <source src={`${BASE}${url}`} type="audio/wav" />
+        <source src={`${base}${url}`} type="audio/wav" />
       </audio>
     );
   }
   return (
     // eslint-disable-next-line @next/next/no-img-element
     <img
-      src={`${BASE}${url}`}
+      src={`${base}${url}`}
       alt="Proof"
       className="mt-2 rounded-lg w-full object-cover"
       style={{ maxHeight: 180, border: "1px solid var(--border)" }}
@@ -44,7 +44,7 @@ function ProofMedia({ url, type }: { url: string; type?: string }) {
   );
 }
 
-function AlertRow({ entry, index }: { entry: AlertEntry; index: number }) {
+function AlertRow({ entry, index, base }: { entry: AlertEntry; index: number; base: string }) {
   const [expanded, setExpanded] = useState(false);
   return (
     <div
@@ -60,9 +60,6 @@ function AlertRow({ entry, index }: { entry: AlertEntry; index: number }) {
         </span>
         <div className="flex-1 min-w-0">
           <p className="text-sm font-medium text-red-300">{entry.message}</p>
-          {entry.score_added != null && (
-            <p className="text-xs mt-0.5" style={{ color: "var(--muted)" }}>+{entry.score_added} pts</p>
-          )}
         </div>
         {entry.proof_url && (
           <span className="text-xs flex-shrink-0" style={{ color: "var(--muted)" }}>
@@ -72,7 +69,7 @@ function AlertRow({ entry, index }: { entry: AlertEntry; index: number }) {
       </button>
       {expanded && entry.proof_url && (
         <div className="px-4 pb-3">
-          <ProofMedia url={entry.proof_url} type={entry.proof_type} />
+          <ProofMedia url={entry.proof_url} type={entry.proof_type} base={base} />
         </div>
       )}
     </div>
@@ -91,35 +88,43 @@ function WarningRow({ entry, index }: { entry: WarningEntry; index: number }) {
   );
 }
 
-export default function SessionDetailPage({ params }: { params: Promise<{ pc_id: string }> }) {
+// ── Inner component — uses useSearchParams (must be inside Suspense) ──────────
+
+function SessionDetailInner({ params }: { params: Promise<{ pc_id: string }> }) {
   const { pc_id } = use(params);
+  const searchParams = useSearchParams();
 
-  const sseRef         = useRef<EventSource | null>(null);
-  const snapshotTimer  = useRef<ReturnType<typeof setInterval> | null>(null);
+  // Read which backend this session belongs to from the ?backend= query param.
+  // Falls back to NEXT_PUBLIC_BACKEND_URL so direct navigation still works.
+  const backendBase = searchParams.get("backend") || process.env.NEXT_PUBLIC_BACKEND_URL || "http://localhost:8000";
+  const sessionApi  = createApi(backendBase);
 
-  const [risk, setRisk]             = useState<RiskInfo | null>(null);
-  const [alerts, setAlerts]         = useState<AlertEntry[]>([]);
-  const [warnings, setWarnings]     = useState<WarningEntry[]>([]);
-  const [snapUrl, setSnapUrl]       = useState<string>("");
-  const [sessionEnded, setEnded]    = useState(false);
-  const [reportId, setReportId]     = useState<string | null>(null);
-  const [activeTab, setActiveTab]   = useState<"alerts" | "warnings">("alerts");
-  const [candidateLabel, setLabel]  = useState(pc_id);
-  const [debugMode, setDebugMode]   = useState(false);
+  const sseRef        = useRef<EventSource | null>(null);
+  const snapshotTimer = useRef<ReturnType<typeof setInterval> | null>(null);
+
+  const [risk, setRisk]           = useState<RiskInfo | null>(null);
+  const [alerts, setAlerts]       = useState<AlertEntry[]>([]);
+  const [warnings, setWarnings]   = useState<WarningEntry[]>([]);
+  const [snapUrl, setSnapUrl]     = useState<string>("");
+  const [sessionEnded, setEnded]  = useState(false);
+  const [reportId, setReportId]   = useState<string | null>(null);
+  const [activeTab, setActiveTab] = useState<"alerts" | "warnings">("alerts");
+  const [candidateLabel, setLabel] = useState(pc_id);
+  const [debugMode, setDebugMode] = useState(false);
 
   const refreshSnapshot = useCallback(() => {
-    setSnapUrl(`${BASE}/snapshot/${pc_id}?t=${Date.now()}`);
-  }, [pc_id]);
+    setSnapUrl(`${backendBase}/snapshot/${pc_id}?t=${Date.now()}`);
+  }, [pc_id, backendBase]);
 
   const handleDebugToggle = useCallback(async () => {
     const next = !debugMode;
     setDebugMode(next);
     try {
-      await api.toggleDebug(pc_id, next);
+      await sessionApi.toggleDebug(pc_id, next);
     } catch {
-      setDebugMode(d => !d); // revert on error
+      setDebugMode(d => !d);
     }
-  }, [debugMode, pc_id]);
+  }, [debugMode, pc_id, sessionApi]);
 
   useEffect(() => {
     // Start snapshot polling at ~7 fps
@@ -127,15 +132,14 @@ export default function SessionDetailPage({ params }: { params: Promise<{ pc_id:
     snapshotTimer.current = setInterval(refreshSnapshot, 150);
 
     // Pre-populate alerts/warnings from history before SSE connects
-    api.sessionLog(pc_id).then(log => {
+    sessionApi.sessionLog(pc_id).then(log => {
       setRisk(log.risk);
-      // alert_log is oldest-first; reverse so newest is at top
       setAlerts([...log.alert_log].reverse());
       setWarnings([...log.warning_log].reverse());
     }).catch(() => {});
 
     // Connect SSE
-    const es = new EventSource(api.streamUrl(pc_id));
+    const es = new EventSource(sessionApi.streamUrl(pc_id));
     sseRef.current = es;
 
     es.onmessage = (e) => {
@@ -154,7 +158,6 @@ export default function SessionDetailPage({ params }: { params: Promise<{ pc_id:
             proof_type : event.proof_type,
           };
           setAlerts(prev => {
-            // Deduplicate: skip if same elapsed_s + message already present
             const dup = prev.some(e => e.elapsed_s === newEntry.elapsed_s && e.message === newEntry.message);
             return dup ? prev : [newEntry, ...prev];
           });
@@ -181,8 +184,8 @@ export default function SessionDetailPage({ params }: { params: Promise<{ pc_id:
       } catch { /* ignore */ }
     };
 
-    // Fetch initial session info for label
-    api.sessions().then(list => {
+    // Fetch session label
+    sessionApi.sessions().then(list => {
       const s = list.find(s => s.pc_id === pc_id);
       if (s?.label) setLabel(s.label);
     }).catch(() => {});
@@ -191,7 +194,8 @@ export default function SessionDetailPage({ params }: { params: Promise<{ pc_id:
       es.close();
       if (snapshotTimer.current) clearInterval(snapshotTimer.current);
     };
-  }, [pc_id, refreshSnapshot]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pc_id, backendBase]);
 
   const scoreColor = risk ? (RISK_COLORS[risk.state] ?? "#22c55e") : "#22c55e";
 
@@ -321,7 +325,9 @@ export default function SessionDetailPage({ params }: { params: Promise<{ pc_id:
             {activeTab === "alerts" && (
               alerts.length === 0
                 ? <p className="text-sm text-center py-12" style={{ color: "var(--muted)" }}>No alerts yet</p>
-                : alerts.map((entry, i) => <AlertRow key={i} entry={entry} index={alerts.length - 1 - i} />)
+                : alerts.map((entry, i) => (
+                    <AlertRow key={i} entry={entry} index={alerts.length - 1 - i} base={backendBase} />
+                  ))
             )}
             {activeTab === "warnings" && (
               warnings.length === 0
@@ -332,5 +338,15 @@ export default function SessionDetailPage({ params }: { params: Promise<{ pc_id:
         </div>
       </div>
     </div>
+  );
+}
+
+// ── Page export — wraps inner component in Suspense for useSearchParams ───────
+
+export default function SessionDetailPage({ params }: { params: Promise<{ pc_id: string }> }) {
+  return (
+    <Suspense fallback={<div className="min-h-screen" style={{ background: "var(--background)" }} />}>
+      <SessionDetailInner params={params} />
+    </Suspense>
   );
 }

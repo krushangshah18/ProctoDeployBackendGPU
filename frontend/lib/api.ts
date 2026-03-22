@@ -1,127 +1,164 @@
-import type { SessionInfo, DetectionConfig, SessionReport, RiskInfo, AlertEntry, WarningEntry, MetricsSnapshot, SystemReport } from "./types";
+import type { SessionInfo, DetectionConfig, SessionReport, ReportMeta, RiskInfo, AlertEntry, WarningEntry, MetricsSnapshot, SystemReport, AdminSettings } from "./types";
 
-const BASE = process.env.NEXT_PUBLIC_BACKEND_URL || "http://localhost:8000";
+const BASE_1 = process.env.NEXT_PUBLIC_BACKEND_URL  || "http://localhost:8000";
+const BASE_2 = process.env.NEXT_PUBLIC_BACKEND_URL_2 || "";
 
-export const api = {
-  // ── Session ──────────────────────────────────────────────────────────────
-  async sessions(): Promise<SessionInfo[]> {
-    const r = await fetch(`${BASE}/sessions`);
-    if (!r.ok) return [];
-    return r.json();
-  },
+// All backend URLs in order. Components that need multi-backend support read this.
+export const BACKEND_URLS: string[] = [BASE_1, ...(BASE_2 ? [BASE_2] : [])];
 
-  async risk(pcId: string): Promise<RiskInfo> {
-    const r = await fetch(`${BASE}/risk/${pcId}`);
-    if (!r.ok) throw new Error("Session not found");
-    return r.json();
-  },
+export function createApi(base: string) {
+  return {
+    base,
 
-  async snapshot(pcId: string): Promise<string> {
-    return `${BASE}/snapshot/${pcId}?t=${Date.now()}`;
-  },
+    // ── Session ──────────────────────────────────────────────────────────────
+    async sessions(): Promise<SessionInfo[]> {
+      const r = await fetch(`${base}/sessions`);
+      if (!r.ok) return [];
+      return r.json();
+    },
 
-  snapshotUrl(pcId: string): string {
-    return `${BASE}/snapshot/${pcId}`;
-  },
+    async risk(pcId: string): Promise<RiskInfo> {
+      const r = await fetch(`${base}/risk/${pcId}`);
+      if (!r.ok) throw new Error("Session not found");
+      return r.json();
+    },
 
-  // ── WebRTC ───────────────────────────────────────────────────────────────
-  async sendIceCandidate(pcId: string, candidate: RTCIceCandidateInit): Promise<void> {
-    await fetch(`${BASE}/ice-candidate/${pcId}`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(candidate),
-    });
-  },
+    async snapshot(pcId: string): Promise<string> {
+      return `${base}/snapshot/${pcId}?t=${Date.now()}`;
+    },
 
-  async offer(sdp: string, type: string, detectionConfig?: Partial<DetectionConfig>) {
-    const r = await fetch(`${BASE}/offer`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ sdp, type, detection_config: detectionConfig ?? {} }),
-    });
-    return r.json();
-  },
+    snapshotUrl(pcId: string): string {
+      return `${base}/snapshot/${pcId}`;
+    },
 
-  // ── Exam config ───────────────────────────────────────────────────────────
-  async getExamConfig(): Promise<DetectionConfig> {
-    const r = await fetch(`${BASE}/exam/config`);
-    if (!r.ok) throw new Error("Failed to get config");
-    return r.json();
-  },
+    // ── WebRTC ───────────────────────────────────────────────────────────────
+    async sendIceCandidate(pcId: string, candidate: RTCIceCandidateInit): Promise<void> {
+      await fetch(`${base}/ice-candidate/${pcId}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(candidate),
+      });
+    },
 
-  async setExamConfig(config: Partial<DetectionConfig>): Promise<DetectionConfig> {
-    const r = await fetch(`${BASE}/exam/config`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(config),
-    });
-    if (!r.ok) throw new Error("Failed to update config");
-    const { updated } = await r.json();
-    return updated;
-  },
+    async offer(sdp: string, type: string, detectionConfig?: Partial<DetectionConfig>) {
+      const r = await fetch(`${base}/offer`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ sdp, type, detection_config: detectionConfig ?? {} }),
+      });
+      return r.json();
+    },
 
-  // ── Reports ───────────────────────────────────────────────────────────────
-  async listReports(): Promise<string[]> {
-    const r = await fetch(`${BASE}/reports`);
-    if (!r.ok) return [];
-    return r.json();
-  },
+    // ── Exam config ───────────────────────────────────────────────────────────
+    async getExamConfig(): Promise<DetectionConfig> {
+      const r = await fetch(`${base}/exam/config`);
+      if (!r.ok) throw new Error("Failed to get config");
+      return r.json();
+    },
 
-  async getReport(reportId: string): Promise<SessionReport> {
-    const r = await fetch(`${BASE}/report/${reportId}`);
-    if (!r.ok) throw new Error("Report not found");
-    return r.json();
-  },
+    async setExamConfig(config: Partial<DetectionConfig>): Promise<DetectionConfig> {
+      const r = await fetch(`${base}/exam/config`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(config),
+      });
+      if (!r.ok) throw new Error("Failed to update config");
+      const { updated } = await r.json();
+      return updated;
+    },
 
-  // ── Proof ─────────────────────────────────────────────────────────────────
-  proofUrl(path: string): string {
-    if (path.startsWith("/proof/")) return `${BASE}${path}`;
-    return `${BASE}/proof/${path}`;
-  },
+    // ── Reports ───────────────────────────────────────────────────────────────
+    async listReports(): Promise<string[]> {
+      const r = await fetch(`${base}/reports`);
+      if (!r.ok) return [];
+      return r.json();
+    },
 
-  // ── Session log (historical alerts/warnings) ──────────────────────────────
-  async sessionLog(pcId: string): Promise<{ alert_log: AlertEntry[]; warning_log: WarningEntry[]; risk: RiskInfo }> {
-    const r = await fetch(`${BASE}/session/${pcId}/log`);
-    if (!r.ok) throw new Error("Session not found");
-    return r.json();
-  },
+    async listReportsMeta(): Promise<ReportMeta[]> {
+      const r = await fetch(`${base}/reports/meta`);
+      if (!r.ok) return [];
+      return r.json();
+    },
 
-  // ── Tab switch reporting ───────────────────────────────────────────────────
-  async tabSwitch(pcId: string): Promise<{ ok: boolean; risk: RiskInfo }> {
-    // keepalive: true — browser completes the request even when the tab is
-    // hidden/backgrounded (default fetch is suspended when tab goes hidden,
-    // which is exactly when this is called).
-    const r = await fetch(`${BASE}/tab_switch/${pcId}`, { method: "POST", keepalive: true });
-    if (!r.ok) throw new Error("tab_switch failed");
-    return r.json();
-  },
+    async getReport(reportId: string): Promise<SessionReport> {
+      const r = await fetch(`${base}/report/${reportId}`);
+      if (!r.ok) throw new Error("Report not found");
+      return r.json();
+    },
 
-  // ── Metrics & system report ───────────────────────────────────────────────
-  async getMetrics(): Promise<MetricsSnapshot> {
-    const r = await fetch(`${BASE}/metrics`);
-    if (!r.ok) throw new Error("metrics unavailable");
-    return r.json();
-  },
+    async deleteReport(reportId: string): Promise<void> {
+      const r = await fetch(`${base}/report/${reportId}`, { method: "DELETE" });
+      if (!r.ok) throw new Error("Delete failed");
+    },
 
-  async getSystemReport(): Promise<SystemReport> {
-    const r = await fetch(`${BASE}/system/report`);
-    if (!r.ok) throw new Error("system report unavailable");
-    return r.json();
-  },
+    // ── Proof ─────────────────────────────────────────────────────────────────
+    proofUrl(path: string): string {
+      if (path.startsWith("/proof/")) return `${base}${path}`;
+      return `${base}/proof/${path}`;
+    },
 
-  // ── Debug overlay ─────────────────────────────────────────────────────────
-  async toggleDebug(pcId: string, enabled: boolean): Promise<{ ok: boolean; debug: boolean }> {
-    const r = await fetch(`${BASE}/debug/${pcId}`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ enabled }),
-    });
-    if (!r.ok) throw new Error("debug toggle failed");
-    return r.json();
-  },
+    // ── Session log ───────────────────────────────────────────────────────────
+    async sessionLog(pcId: string): Promise<{ alert_log: AlertEntry[]; warning_log: WarningEntry[]; risk: RiskInfo }> {
+      const r = await fetch(`${base}/session/${pcId}/log`);
+      if (!r.ok) throw new Error("Session not found");
+      return r.json();
+    },
 
-  // ── SSE stream ────────────────────────────────────────────────────────────
-  streamUrl(pcId: string): string {
-    return `${BASE}/stream/${pcId}`;
-  },
-};
+    // ── Tab switch ────────────────────────────────────────────────────────────
+    async tabSwitch(pcId: string): Promise<{ ok: boolean; risk: RiskInfo }> {
+      // keepalive: true — browser completes the request even when the tab is hidden.
+      const r = await fetch(`${base}/tab_switch/${pcId}`, { method: "POST", keepalive: true });
+      if (!r.ok) throw new Error("tab_switch failed");
+      return r.json();
+    },
+
+    // ── Metrics & system report ───────────────────────────────────────────────
+    async getMetrics(): Promise<MetricsSnapshot> {
+      const r = await fetch(`${base}/metrics`);
+      if (!r.ok) throw new Error("metrics unavailable");
+      return r.json();
+    },
+
+    async getSystemReport(): Promise<SystemReport> {
+      const r = await fetch(`${base}/system/report`);
+      if (!r.ok) throw new Error("system report unavailable");
+      return r.json();
+    },
+
+    // ── Admin settings ────────────────────────────────────────────────────────
+    async getAdminSettings(): Promise<AdminSettings> {
+      const r = await fetch(`${base}/admin/settings`);
+      if (!r.ok) throw new Error("settings unavailable");
+      return r.json();
+    },
+
+    async saveAdminSettings(patch: Partial<AdminSettings>): Promise<{ ok: boolean; changed: Partial<AdminSettings> }> {
+      const r = await fetch(`${base}/admin/settings`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(patch),
+      });
+      if (!r.ok) throw new Error("settings update failed");
+      return r.json();
+    },
+
+    // ── Debug overlay ─────────────────────────────────────────────────────────
+    async toggleDebug(pcId: string, enabled: boolean): Promise<{ ok: boolean; debug: boolean }> {
+      const r = await fetch(`${base}/debug/${pcId}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ enabled }),
+      });
+      if (!r.ok) throw new Error("debug toggle failed");
+      return r.json();
+    },
+
+    // ── SSE stream ────────────────────────────────────────────────────────────
+    streamUrl(pcId: string): string {
+      return `${base}/stream/${pcId}`;
+    },
+  };
+}
+
+// Default api instance — used by candidate page and anywhere a single backend is sufficient.
+export const api = createApi(BASE_1);

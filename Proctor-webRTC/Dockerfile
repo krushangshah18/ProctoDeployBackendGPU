@@ -50,18 +50,15 @@ COPY core/       core/
 COPY detectors/  detectors/
 COPY settings/   settings/
 COPY utils/      utils/
-COPY config.py         .
-COPY facemesh_worker.py .
-COPY server.py         .
-COPY main.py           .
+COPY config.py  .
+COPY server.py  .
+COPY main.py    .
 
 # Runtime directories (logs + proof/report storage)
 RUN mkdir -p logs reports
 
 EXPOSE 8000
 
-# --device auto  → uses CUDA if available, CPU otherwise (safe fallback)
-# --half         → FP16 on CUDA (~2× throughput, ignored on CPU)
-# --warmup 3     → pre-compile CUDA kernels at startup
-# RTX 3090 is Ampere (sm_86) — FP16 fully supported. --half gives ~2x throughput.
-CMD ["python", "main.py", "--device", "auto", "--half", "--warmup", "3"]
+# --half     → FP16 on CUDA (~2× throughput, ~½ VRAM)
+# --warmup 3 → pre-compile CUDA kernels at startup (eliminates first-frame latency spike)
+CMD ["python", "main.py", "--half", "--warmup", "3"]

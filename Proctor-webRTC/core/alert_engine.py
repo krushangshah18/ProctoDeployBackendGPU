@@ -68,8 +68,7 @@ class AlertEngine:
         # ── Score added → ALERT ───────────────────────────────────────────────
         api_due = self._api_cooldown_until.get(key, 0.0)
         if now >= api_due:
-            score_tag = f"  [+{event.risk_added:.0f} pts]"
-            alert_manager.alert(f"{alert_msg}{score_tag}")
+            alert_manager.alert(alert_msg)
             self._api_cooldown_until[key] = now + A.API_COOLDOWNS.get(key, 10)
 
     # ── Internals ─────────────────────────────────────────────────────────────

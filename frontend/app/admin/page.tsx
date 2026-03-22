@@ -2,8 +2,14 @@
 
 import { useEffect, useState, useCallback } from "react";
 import Link from "next/link";
-import { api } from "@/lib/api";
+import { createApi, BACKEND_URLS } from "@/lib/api";
 import type { SessionInfo, DetectionConfig } from "@/lib/types";
+
+// Returns ":8000" / ":8001" from a full URL — used as instance labels.
+function portLabel(url: string): string {
+  try { return `:${new URL(url).port || "80"}`; }
+  catch { return url; }
+}
 
 const RISK_COLORS: Record<string, { text: string; bg: string; border: string }> = {
   NORMAL      : { text: "#22c55e", bg: "#052e16", border: "#166534" },
@@ -58,6 +64,9 @@ function SessionCard({ s }: { s: SessionInfo }) {
   const state = s.risk_state ?? "NORMAL";
   const col   = RISK_COLORS[state] ?? RISK_COLORS.NORMAL;
   const score = s.risk_score ?? 0;
+  const detailHref = s.backendUrl
+    ? `/admin/session/${s.pc_id}?backend=${encodeURIComponent(s.backendUrl)}`
+    : `/admin/session/${s.pc_id}`;
 
   return (
     <div
@@ -66,15 +75,24 @@ function SessionCard({ s }: { s: SessionInfo }) {
     >
       {/* Header */}
       <div className="flex items-start justify-between gap-2">
-        <div>
-          <p className="font-bold text-base">{s.label}</p>
-          <span className="text-xs px-2 py-0.5 rounded-full font-medium mt-1 inline-block"
+        <div className="flex flex-col gap-1 min-w-0">
+          <div className="flex items-center gap-2">
+            <p className="font-bold text-base truncate">{s.label}</p>
+            {/* Instance badge — only shown when multiple backends are configured */}
+            {BACKEND_URLS.length > 1 && s.backendUrl && (
+              <span className="text-xs px-1.5 py-0.5 rounded font-mono flex-shrink-0"
+                style={{ background: "var(--surface2)", color: "var(--muted)", border: "1px solid var(--border)" }}>
+                {portLabel(s.backendUrl)}
+              </span>
+            )}
+          </div>
+          <span className="text-xs px-2 py-0.5 rounded-full font-medium inline-block w-fit"
             style={{ background: s.connection_state === "connected" ? "#052e16" : "var(--surface2)", color: s.connection_state === "connected" ? "#22c55e" : "var(--muted)", border: `1px solid ${s.connection_state === "connected" ? "#166534" : "var(--border)"}` }}>
             {s.connection_state}
           </span>
         </div>
         {s.terminated && (
-          <span className="text-xs font-bold px-2 py-1 rounded bg-red-950 text-red-400 border border-red-900">TERMINATED</span>
+          <span className="text-xs font-bold px-2 py-1 rounded bg-red-950 text-red-400 border border-red-900 flex-shrink-0">TERMINATED</span>
         )}
       </div>
 
@@ -98,7 +116,7 @@ function SessionCard({ s }: { s: SessionInfo }) {
       {/* Actions */}
       <div className="flex gap-2">
         <Link
-          href={`/admin/session/${s.pc_id}`}
+          href={detailHref}
           className="flex-1 text-center py-2 rounded-lg text-sm font-semibold transition-all hover:opacity-90"
           style={{ background: "#1d4ed8", color: "#fff" }}
         >
@@ -130,25 +148,44 @@ function Toggle({ label, checked, onChange }: { label: string; checked: boolean;
 }
 
 export default function AdminPage() {
-  const [sessions, setSessions] = useState<SessionInfo[]>([]);
-  const [config, setConfig]     = useState<DetectionConfig | null>(null);
-  const [saving, setSaving]     = useState(false);
-  const [configOpen, setConfigOpen] = useState(false);
+  const [sessions, setSessions]       = useState<SessionInfo[]>([]);
+  const [config, setConfig]           = useState<DetectionConfig | null>(null);
+  const [saving, setSaving]           = useState(false);
+  const [configOpen, setConfigOpen]   = useState(false);
+  // Which backend the detection config panel targets (only relevant with 2+ backends).
+  const [configBackend, setConfigBackend] = useState(BACKEND_URLS[0]);
 
+  // Fetch sessions from ALL backends in parallel and merge into one list.
   const loadSessions = useCallback(async () => {
-    try { setSessions(await api.sessions()); } catch { /* ignore */ }
+    try {
+      const results = await Promise.allSettled(
+        BACKEND_URLS.map(url =>
+          createApi(url).sessions().then(ss => ss.map(s => ({ ...s, backendUrl: url })))
+        )
+      );
+      const all = results
+        .filter((r): r is PromiseFulfilledResult<SessionInfo[]> => r.status === "fulfilled")
+        .flatMap(r => r.value);
+      setSessions(all);
+    } catch { /* ignore */ }
   }, []);
 
-  const loadConfig = useCallback(async () => {
-    try { setConfig(await api.getExamConfig()); } catch { /* ignore */ }
+  // Load detection config for the currently selected config backend.
+  const loadConfig = useCallback(async (url: string) => {
+    try { setConfig(await createApi(url).getExamConfig()); } catch { /* ignore */ }
   }, []);
 
+  // Session polling every 3 s.
   useEffect(() => {
     loadSessions();
-    loadConfig();
     const t = setInterval(loadSessions, 3000);
     return () => clearInterval(t);
-  }, [loadSessions, loadConfig]);
+  }, [loadSessions]);
+
+  // Reload detection config whenever the panel opens or the target backend changes.
+  useEffect(() => {
+    if (configOpen) loadConfig(configBackend);
+  }, [configOpen, configBackend, loadConfig]);
 
   const handleToggle = async (key: keyof DetectionConfig, value: boolean) => {
     if (!config) return;
@@ -156,7 +193,7 @@ export default function AdminPage() {
     setConfig(next);
     setSaving(true);
     try {
-      await api.setExamConfig({ [key]: value });
+      await createApi(configBackend).setExamConfig({ [key]: value });
     } catch { /* revert on failure */
       setConfig(config);
     } finally {
@@ -164,7 +201,6 @@ export default function AdminPage() {
     }
   };
 
-  // Count sessions that hit admin-review threshold
   const criticalCount = sessions.filter(s =>
     s.risk_state === "ADMIN_REVIEW" || s.risk_state === "TERMINATED" || (s.risk_score ?? 0) >= 100
   ).length;
@@ -191,6 +227,9 @@ export default function AdminPage() {
             <span className="w-1.5 h-1.5 rounded-full bg-green-500 animate-pulse" />
             Monitor
           </Link>
+          <Link href="/admin/settings" className="text-sm font-medium px-4 py-2 rounded-lg flex items-center gap-1.5" style={{ background: "var(--surface2)", border: "1px solid var(--border)" }}>
+            ⚙ Settings
+          </Link>
           <button
             onClick={() => setConfigOpen(o => !o)}
             className="text-sm font-medium px-4 py-2 rounded-lg flex items-center gap-2"
@@ -207,10 +246,32 @@ export default function AdminPage() {
         {/* Detection config panel */}
         {configOpen && config && (
           <aside className="w-72 border-r p-5 overflow-y-auto" style={{ background: "var(--surface)", borderColor: "var(--border)" }}>
-            <div className="flex items-center justify-between mb-4">
+            <div className="flex items-center justify-between mb-3">
               <h2 className="text-sm font-bold uppercase tracking-widest" style={{ color: "var(--muted)" }}>Detection Settings</h2>
-              <span className="text-xs" style={{ color: "var(--muted)" }}>Live — affects all sessions</span>
+              <span className="text-xs" style={{ color: "var(--muted)" }}>
+                {BACKEND_URLS.length > 1 ? `Instance ${portLabel(configBackend)}` : "Live — affects all sessions"}
+              </span>
             </div>
+
+            {/* Instance selector — only shown when 2+ backends */}
+            {BACKEND_URLS.length > 1 && (
+              <div className="flex gap-1 mb-4 p-1 rounded-lg" style={{ background: "var(--surface2)", border: "1px solid var(--border)" }}>
+                {BACKEND_URLS.map(url => (
+                  <button
+                    key={url}
+                    onClick={() => setConfigBackend(url)}
+                    className="flex-1 py-1 text-xs font-semibold rounded-md transition-colors"
+                    style={{
+                      background: configBackend === url ? "#1d4ed8" : "transparent",
+                      color: configBackend === url ? "#fff" : "var(--muted)",
+                    }}
+                  >
+                    {portLabel(url)}
+                  </button>
+                ))}
+              </div>
+            )}
+
             <div className="space-y-5">
               {DETECTION_GROUPS.map(group => (
                 <div key={group.label}>
@@ -238,6 +299,9 @@ export default function AdminPage() {
               Active Candidates
               <span className="ml-2 text-sm font-normal" style={{ color: "var(--muted)" }}>
                 {sessions.length} session{sessions.length !== 1 ? "s" : ""}
+                {BACKEND_URLS.length > 1 && (
+                  <span className="ml-1">across {BACKEND_URLS.length} instances</span>
+                )}
               </span>
             </h2>
           </div>
@@ -252,7 +316,7 @@ export default function AdminPage() {
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
               {sessions
                 .sort((a, b) => (b.risk_score ?? 0) - (a.risk_score ?? 0))
-                .map(s => <SessionCard key={s.pc_id} s={s} />)}
+                .map(s => <SessionCard key={`${s.backendUrl}-${s.pc_id}`} s={s} />)}
             </div>
           )}
         </main>

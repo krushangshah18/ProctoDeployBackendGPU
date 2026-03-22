@@ -1,24 +1,34 @@
 import cv2
 import math
+import time
 import mediapipe as mp
 
 import numpy as np
 from config import (
     LOOK_AWAY_YAW, LOOK_DOWN_PITCH, LOOK_UP_PITCH,
     GAZE_LEFT, GAZE_RIGHT,
-    EAR_THRESHOLD, BLINK_FRAMES,
+    EAR_THRESHOLD, BLINK_MIN_DURATION_S, BLINK_MAX_DURATION_S,
     MIN_FACE_WIDTH, MIN_FACE_HEIGHT,
 )
 
 
 class HeadPoseDetector:
-    def __init__(self, debug=False, own_mesh: bool = True):
+    def __init__(self, debug=False, own_mesh: bool = True,
+                 min_face_width=None, min_face_height=None,
+                 look_away_yaw=None, look_down_pitch=None, look_up_pitch=None,
+                 gaze_left=None, gaze_right=None, ear_threshold=None,
+                 blink_min_duration_s=None, blink_max_duration_s=None):
         """
         Args:
             debug:    Enable draw_debug overlays.
             own_mesh: If True (default), create an internal FaceMesh instance.
                       Set False when using a shared FaceMeshProvider — the
                       provider's landmarks are passed via detect(..., landmarks=).
+            min_face_width / min_face_height / look_away_yaw / look_down_pitch /
+            look_up_pitch / gaze_left / gaze_right / ear_threshold /
+            blink_min_duration_s / blink_max_duration_s:
+                      Override the module-level config defaults. Pass explicit
+                      values from session_cfg so runtime_settings are respected.
         """
         if own_mesh:
             self.face_mesh = mp.solutions.face_mesh.FaceMesh(
@@ -49,27 +59,30 @@ class HeadPoseDetector:
         self.RIGHT_EYE_RIGHT = 263
         self.RIGHT_IRIS = 473
 
-        # Face Size Constraints — sourced from config.py
-        self.MIN_FACE_WIDTH  = MIN_FACE_WIDTH
-        self.MIN_FACE_HEIGHT = MIN_FACE_HEIGHT
+        # Face Size Constraints — constructor param overrides config.py default
+        self.MIN_FACE_WIDTH  = min_face_width  if min_face_width  is not None else MIN_FACE_WIDTH
+        self.MIN_FACE_HEIGHT = min_face_height if min_face_height is not None else MIN_FACE_HEIGHT
 
 
         # Eye landmarks (MediaPipe)
         self.LEFT_EYE_POINTS = [33, 160, 158, 133, 153, 144]
         self.RIGHT_EYE_POINTS = [362, 385, 387, 263, 373, 380]
 
-        # Blink config — sourced from config.py
-        self.EAR_THRESHOLD = EAR_THRESHOLD
-        self.BLINK_FRAMES  = BLINK_FRAMES
-        self.blink_counter = 0
-        self.total_blinks  = 0
+        # Blink config — constructor param overrides config.py default.
+        # Time-based detection: EAR must drop below threshold for at least
+        # BLINK_MIN_DURATION_S and recover within BLINK_MAX_DURATION_S.
+        self.EAR_THRESHOLD       = ear_threshold        if ear_threshold        is not None else EAR_THRESHOLD
+        self.BLINK_MIN_DURATION_S = blink_min_duration_s if blink_min_duration_s is not None else BLINK_MIN_DURATION_S
+        self.BLINK_MAX_DURATION_S = blink_max_duration_s if blink_max_duration_s is not None else BLINK_MAX_DURATION_S
+        self._blink_start: float = 0.0   # monotonic timestamp when EAR dropped below threshold
+        self.total_blinks: int   = 0
 
-        # Head Pose Thresholds — sourced from config.py
-        self.LOOK_AWAY_YAW   = LOOK_AWAY_YAW
-        self.LOOK_DOWN_PITCH = LOOK_DOWN_PITCH
-        self.LOOK_UP_PITCH   = LOOK_UP_PITCH
-        self.GAZE_LEFT       = GAZE_LEFT
-        self.GAZE_RIGHT      = GAZE_RIGHT
+        # Head Pose Thresholds — constructor param overrides config.py default
+        self.LOOK_AWAY_YAW   = look_away_yaw   if look_away_yaw   is not None else LOOK_AWAY_YAW
+        self.LOOK_DOWN_PITCH = look_down_pitch if look_down_pitch is not None else LOOK_DOWN_PITCH
+        self.LOOK_UP_PITCH   = look_up_pitch   if look_up_pitch   is not None else LOOK_UP_PITCH
+        self.GAZE_LEFT       = gaze_left       if gaze_left       is not None else GAZE_LEFT
+        self.GAZE_RIGHT      = gaze_right      if gaze_right      is not None else GAZE_RIGHT
 
     
 
@@ -179,6 +192,18 @@ class HeadPoseDetector:
             ear_col = (80, 80, 255) if ear < self.EAR_THRESHOLD else (100, 220, 100)
             _tag(f"EAR  {ear:.2f}",          tag_x, tag_y,      ear_col)
             _tag(f"Blnk {self.total_blinks}", tag_x, tag_y + 18, (160, 160, 255))
+            # Show in-progress blink duration when eye is closed
+            if self._blink_start > 0.0:
+                dur_ms = (time.monotonic() - self._blink_start) * 1000
+                _tag(f"Bdur {dur_ms:.0f}ms",  tag_x, tag_y + 36, (200, 160, 80))
+
+            fw = getattr(self, '_last_face_width',  None)
+            fh = getattr(self, '_last_face_height', None)
+            if fw is not None:
+                fw_col = (80, 80, 255) if fw < self.MIN_FACE_WIDTH  else (100, 220, 100)
+                fh_col = (80, 80, 255) if fh < self.MIN_FACE_HEIGHT else (100, 220, 100)
+                _tag(f"FW {fw:3d}/{self.MIN_FACE_WIDTH}",  tag_x, tag_y + 54, fw_col)
+                _tag(f"FH {fh:3d}/{self.MIN_FACE_HEIGHT}", tag_x, tag_y + 72, fh_col)
 
     def detect(self, frame, draw=True,
                show_gaze=True, show_pose=True, show_liveness=True,
@@ -222,6 +247,8 @@ class HeadPoseDetector:
         # Face geometry
         face_width = max(1, right_cheek[0] - left_cheek[0])
         face_height = max(1, chin[1] - forehead[1])
+        self._last_face_width  = face_width
+        self._last_face_height = face_height
         face_center_x = (left_cheek[0] + right_cheek[0]) // 2
         face_center_y = (forehead[1] + chin[1]) // 2
 
@@ -267,7 +294,10 @@ class HeadPoseDetector:
         looking_left = gaze_ratio < self.GAZE_LEFT
         looking_right = gaze_ratio > self.GAZE_RIGHT
 
-        # Blink Detection
+        # Blink Detection — time-based window
+        # Counts a blink when EAR < threshold for [BLINK_MIN_DURATION_S,
+        # BLINK_MAX_DURATION_S]. Catches quick blinks (~50ms) that a frame-
+        # count gate would miss at the ~300ms MediaPipe stride interval.
         left_eye = [px(i) for i in self.LEFT_EYE_POINTS]
         right_eye = [px(i) for i in self.RIGHT_EYE_POINTS]
 
@@ -277,15 +307,18 @@ class HeadPoseDetector:
         ) / 2.0
 
         blinked = False
+        now_mono = time.monotonic()
 
         if ear < self.EAR_THRESHOLD:
-            self.blink_counter += 1
+            if self._blink_start == 0.0:
+                self._blink_start = now_mono          # eye just closed
         else:
-            if self.blink_counter >= self.BLINK_FRAMES:
-                self.total_blinks += 1
-                blinked = True
-
-            self.blink_counter = 0
+            if self._blink_start > 0.0:
+                duration = now_mono - self._blink_start
+                if self.BLINK_MIN_DURATION_S <= duration <= self.BLINK_MAX_DURATION_S:
+                    self.total_blinks += 1
+                    blinked = True
+            self._blink_start = 0.0                   # eye open — reset
 
         if draw and self.DEBUG:
             result_tuple = (

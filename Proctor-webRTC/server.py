@@ -4,6 +4,7 @@ import json
 import logging
 import os
 import platform
+import shutil
 import sys
 import time
 from contextlib import asynccontextmanager
@@ -30,12 +31,8 @@ _ICE_SERVERS = RTCConfiguration(iceServers=[
     RTCIceServer(urls=["stun:stun1.l.google.com:19302"]),
 ])
 
-MODEL_ENABLED = True
-
-if MODEL_ENABLED:
-    from core.proctor_coordinator import ProctorCoordinator
-    from core.proctor_session import ProctorSession
-
+from core.proctor_coordinator import ProctorCoordinator
+from core.proctor_session import ProctorSession
 from core.metrics import metrics as _metrics
 
 # Logging is set up in main.py via setup_logging().
@@ -57,36 +54,30 @@ def _build_config() -> dict:
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     global coordinator, _session_config, MAX_CONNECTIONS
-    if MODEL_ENABLED:
-        _session_config = _build_config()
-        MAX_CONNECTIONS = _session_config.get("MAX_SESSIONS", 40)
-        # CLI overrides take precedence over config.py values (set by main.py via env vars)
-        _device       = os.getenv("PROCTOR_DEVICE")  or _session_config.get("YOLO_DEVICE",        "cpu")
-        _half         = os.getenv("PROCTOR_HALF")    == "1" if os.getenv("PROCTOR_HALF") else _session_config.get("YOLO_HALF",         False)
-        _warmup       = int(os.getenv("PROCTOR_WARMUP")) if os.getenv("PROCTOR_WARMUP") else _session_config.get("YOLO_WARMUP_FRAMES", 0)
-        _min_vram     = _session_config.get("YOLO_MIN_VRAM_GB",    1.5)
-        _imgsz        = _session_config.get("YOLO_IMGSZ",          640)
-        _mp_stride    = _session_config.get("MEDIAPIPE_STRIDE",     1)
+    _session_config = _build_config()
+    MAX_CONNECTIONS = _session_config.get("MAX_SESSIONS", 40)
+    # CLI --half / --warmup override config.py values (set by main.py via env vars)
+    _half    = os.getenv("PROCTOR_HALF")    == "1" if os.getenv("PROCTOR_HALF") else _session_config.get("YOLO_HALF",         True)
+    _warmup  = int(os.getenv("PROCTOR_WARMUP")) if os.getenv("PROCTOR_WARMUP") else _session_config.get("YOLO_WARMUP_FRAMES", 3)
 
-        coordinator = ProctorCoordinator(
-            model_path        = _session_config["YOLO_MODEL_PATH"],
-            max_sessions      = MAX_CONNECTIONS,
-            tick_rate         = _session_config.get("TICK_RATE", 10),
-            device            = _device,
-            default_conf      = _session_config.get("YOLO_DEFAULT_CONF", 0.50),
-            person_conf       = _session_config.get("YOLO_PERSON_CONF",  0.30),
-            phone_conf        = _session_config.get("YOLO_PHONE_CONF",   0.65),
-            book_conf         = _session_config.get("YOLO_BOOK_CONF",    0.70),
-            audio_conf        = _session_config.get("YOLO_AUDIO_CONF",   0.41),
-            half              = _half,
-            warmup_frames     = _warmup,
-            min_vram_gb       = _min_vram,
-            imgsz             = _imgsz,
-            mediapipe_stride  = _mp_stride,
-        )
-        await coordinator.start()
-        logger.info("ProctorCoordinator started (max=%d  device=%s  half=%s  warmup=%d)",
-                    MAX_CONNECTIONS, _device, _half, _warmup)
+    coordinator = ProctorCoordinator(
+        model_path        = _session_config["YOLO_MODEL_PATH"],
+        max_sessions      = MAX_CONNECTIONS,
+        tick_rate         = _session_config.get("TICK_RATE", 10),
+        default_conf      = _session_config.get("YOLO_DEFAULT_CONF", 0.50),
+        person_conf       = _session_config.get("YOLO_PERSON_CONF",  0.30),
+        phone_conf        = _session_config.get("YOLO_PHONE_CONF",   0.65),
+        book_conf         = _session_config.get("YOLO_BOOK_CONF",    0.70),
+        audio_conf        = _session_config.get("YOLO_AUDIO_CONF",   0.41),
+        half              = _half,
+        warmup_frames     = _warmup,
+        min_vram_gb       = _session_config.get("YOLO_MIN_VRAM_GB",    2.0),
+        imgsz             = _session_config.get("YOLO_IMGSZ",          640),
+        mediapipe_stride  = _session_config.get("MEDIAPIPE_STRIDE",    1),
+    )
+    await coordinator.start()
+    logger.info("ProctorCoordinator started (max=%d  half=%s  warmup=%d)",
+                MAX_CONNECTIONS, _half, _warmup)
     yield
     if coordinator is not None:
         await coordinator.stop()
@@ -132,12 +123,21 @@ class RequestMetricsMiddleware(BaseHTTPMiddleware):
 
 app.add_middleware(RequestMetricsMiddleware)
 
-# ── CORS — allow NextJS dev server and any configured origin ─────────────────
+# ── CORS ─────────────────────────────────────────────────────────────────────
+# Set CORS_ORIGINS env var to a comma-separated list of allowed origins.
+# e.g. CORS_ORIGINS=https://proctor.example.com,https://admin.example.com
+# Defaults to localhost:3000 for local development.
+_cors_origins = [
+    o.strip()
+    for o in os.getenv("CORS_ORIGINS", "http://localhost:3000").split(",")
+    if o.strip()
+]
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],          # tighten in production
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_origins     = _cors_origins,
+    allow_methods     = ["GET", "POST"],
+    allow_headers     = ["Content-Type", "Cache-Control"],
+    allow_credentials = False,
 )
 
 
@@ -145,10 +145,12 @@ app.add_middleware(
 @app.exception_handler(Exception)
 async def _unhandled_exception_handler(request: Request, exc: Exception):
     logger.exception("Unhandled exception on %s %s", request.method, request.url.path)
+    origin = request.headers.get("origin", "")
+    cors_header = origin if origin in _cors_origins else _cors_origins[0]
     return JSONResponse(
         status_code=500,
         content={"detail": str(exc)},
-        headers={"Access-Control-Allow-Origin": "*"},
+        headers={"Access-Control-Allow-Origin": cors_header},
     )
 
 pcs: set = set()
@@ -292,7 +294,7 @@ async def list_sessions():
             "fps"             : stats.get("fps"),
             "resolution"      : stats.get("resolution"),
         }
-        if MODEL_ENABLED and coordinator and pc_id in coordinator.sessions:
+        if coordinator and pc_id in coordinator.sessions:
             session   = coordinator.sessions[pc_id]
             risk_info = session.risk.get_display()
             entry.update({
@@ -308,7 +310,7 @@ async def list_sessions():
 @app.get("/snapshot/{pc_id}")
 async def get_snapshot(pc_id: str):
     # When debug mode is on, produce an annotated frame on the fly
-    if MODEL_ENABLED and coordinator and pc_id in coordinator.sessions:
+    if coordinator and pc_id in coordinator.sessions:
         session = coordinator.sessions[pc_id]
         if session.debug_mode:
             debug_frame = session.get_debug_frame()
@@ -425,8 +427,8 @@ async def system_report():
     }
 
     # ── Detector / model info ─────────────────────────────────────────────────
-    detector_info: dict = {"model_enabled": MODEL_ENABLED}
-    if MODEL_ENABLED and coordinator is not None:
+    detector_info: dict = {}
+    if coordinator is not None:
         detector_info.update(coordinator.detector.device_info)
 
     # ── Coordinator ───────────────────────────────────────────────────────────
@@ -579,6 +581,41 @@ async def list_reports():
             reports.append(d.name)
     return JSONResponse(reports)
 
+@app.get("/reports/meta")
+async def list_reports_meta():
+    """List reports with metadata: risk state, counts, disk size, proof count."""
+    reports_dir = Path("reports")
+    if not reports_dir.exists():
+        return JSONResponse([])
+    result = []
+    for d in sorted(reports_dir.iterdir(), key=lambda p: p.stat().st_mtime, reverse=True):
+        rj = d / "report.json"
+        if not d.is_dir() or not rj.exists():
+            continue
+        try:
+            with open(rj) as f:
+                r = json.load(f)
+            # Compute directory size and proof file count
+            size_bytes = sum(p.stat().st_size for p in d.rglob("*") if p.is_file())
+            proof_count = sum(1 for p in (d / "proof").rglob("*") if p.is_file()) if (d / "proof").exists() else 0
+            result.append({
+                "id"           : d.name,
+                "session_id"   : r.get("session_id", d.name),
+                "session_start": r.get("session_start", ""),
+                "session_end"  : r.get("session_end", ""),
+                "duration_s"   : r.get("duration_s", 0),
+                "risk_state"   : r.get("risk", {}).get("final_state", "NORMAL"),
+                "final_score"  : r.get("risk", {}).get("final_score", 0),
+                "terminated"   : r.get("risk", {}).get("terminated", False),
+                "alert_count"  : r.get("total_api_alerts", 0),
+                "warning_count": r.get("total_warnings", 0),
+                "size_kb"      : round(size_bytes / 1024, 1),
+                "proof_count"  : proof_count,
+            })
+        except Exception:
+            pass
+    return JSONResponse(result)
+
 @app.get("/report/{report_id}")
 async def get_report(report_id: str):
     """Get the JSON report for a completed session."""
@@ -590,6 +627,21 @@ async def get_report(report_id: str):
         raise HTTPException(status_code=404, detail="Report not found")
     with open(path) as f:
         return JSONResponse(json.load(f))
+
+@app.delete("/report/{report_id}")
+async def delete_report(report_id: str):
+    """Delete a completed session report directory (report.json + all proof files)."""
+    if "/" in report_id or "\\" in report_id or ".." in report_id:
+        raise HTTPException(status_code=400, detail="Invalid report ID")
+    report_dir = (Path("reports") / report_id).resolve()
+    reports_root = Path("reports").resolve()
+    if not str(report_dir).startswith(str(reports_root)):
+        raise HTTPException(status_code=403, detail="Forbidden")
+    if not report_dir.exists() or not report_dir.is_dir():
+        raise HTTPException(status_code=404, detail="Report not found")
+    shutil.rmtree(report_dir)
+    logger.info("Deleted report %s", report_id)
+    return JSONResponse({"ok": True, "deleted": report_id})
 
 
 # ── Exam config (admin-controlled detection toggles) ─────────────────────────
@@ -617,6 +669,207 @@ async def set_exam_config(request: Request):
         raise HTTPException(status_code=503, detail="Coordinator not running")
     updated = coordinator.update_exam_config(body)
     return JSONResponse({"updated": updated})
+
+# ── Admin settings (full tunable config) ─────────────────────────────────────
+
+def _get_all_settings() -> dict:
+    """
+    Build the full settings payload served by GET /admin/settings.
+    Merges config.py values with any runtime_settings / exam_config overrides
+    and annotates each key with type, label, category metadata for the UI.
+    """
+    import settings.scoring as S
+    import settings.alerts  as A
+
+    base = dict(_session_config)
+    rt   = coordinator.runtime_settings if coordinator else {}
+    ec   = coordinator.exam_config       if coordinator else {}
+
+    def _v(key, fallback=None):
+        # Priority: exam_config > runtime_settings > base config
+        if key in ec:   return ec[key]
+        if key in rt:   return rt[key]
+        return base.get(key, fallback)
+
+    return {
+        "detection": {
+            "DETECT_LOOKING_AWAY"   : _v("DETECT_LOOKING_AWAY",    True),
+            "DETECT_LOOKING_DOWN"   : _v("DETECT_LOOKING_DOWN",    True),
+            "DETECT_LOOKING_UP"     : _v("DETECT_LOOKING_UP",      True),
+            "DETECT_LOOKING_SIDE"   : _v("DETECT_LOOKING_SIDE",    True),
+            "DETECT_FACE_HIDDEN"    : _v("DETECT_FACE_HIDDEN",     True),
+            "DETECT_PARTIAL_FACE"   : _v("DETECT_PARTIAL_FACE",    True),
+            "DETECT_FAKE_PRESENCE"  : _v("DETECT_FAKE_PRESENCE",   True),
+            "DETECT_SPEAKER_AUDIO"  : _v("DETECT_SPEAKER_AUDIO",   True),
+            "DETECT_PHONE"          : _v("DETECT_PHONE",           True),
+            "DETECT_BOOK"           : _v("DETECT_BOOK",            True),
+            "DETECT_HEADPHONE"      : _v("DETECT_HEADPHONE",       True),
+            "DETECT_EARBUD"         : _v("DETECT_EARBUD",          True),
+            "DETECT_MULTIPLE_PEOPLE": _v("DETECT_MULTIPLE_PEOPLE", True),
+        },
+        "thresholds": {
+            "LOOKING_AWAY_THRESHOLD": _v("LOOKING_AWAY_THRESHOLD", 2.0),
+            "GAZE_THRESHOLD"        : _v("GAZE_THRESHOLD",         1.5),
+            "LOOK_AWAY_YAW"         : _v("LOOK_AWAY_YAW",          0.20),
+            "LOOK_DOWN_PITCH"       : _v("LOOK_DOWN_PITCH",        0.13),
+            "LOOK_UP_PITCH"         : _v("LOOK_UP_PITCH",         -0.10),
+            "GAZE_LEFT"             : _v("GAZE_LEFT",             -0.13),
+            "GAZE_RIGHT"            : _v("GAZE_RIGHT",             0.13),
+            "EAR_THRESHOLD"         : _v("EAR_THRESHOLD",          0.20),
+            "BLINK_MIN_DURATION_S"  : _v("BLINK_MIN_DURATION_S",   0.05),
+            "BLINK_MAX_DURATION_S"  : _v("BLINK_MAX_DURATION_S",   0.40),
+            "MIN_FACE_WIDTH"        : _v("MIN_FACE_WIDTH",          110),
+            "MIN_FACE_HEIGHT"       : _v("MIN_FACE_HEIGHT",         120),
+        },
+        "objects": {
+            "OBJECT_WINDOW"         : _v("OBJECT_WINDOW",          15),
+            "PHONE_MIN_VOTES"       : _v("PHONE_MIN_VOTES",         9),
+            "BOOK_MIN_VOTES"        : _v("BOOK_MIN_VOTES",         10),
+            "HEADPHONE_MIN_VOTES"   : _v("HEADPHONE_MIN_VOTES",     9),
+            "EARBUD_MIN_VOTES"      : _v("EARBUD_MIN_VOTES",        9),
+            "OBJECT_MIN_VOTES"      : _v("OBJECT_MIN_VOTES",        5),
+            "YOLO_DEFAULT_CONF"     : _v("YOLO_DEFAULT_CONF",      0.50),
+            "YOLO_PHONE_CONF"       : _v("YOLO_PHONE_CONF",        0.65),
+            "YOLO_BOOK_CONF"        : _v("YOLO_BOOK_CONF",         0.70),
+            "YOLO_AUDIO_CONF"       : _v("YOLO_AUDIO_CONF",        0.41),
+        },
+        "scoring": {
+            "STATE_WARNING"              : S.STATE_WARNING,
+            "STATE_HIGH_RISK"            : S.STATE_HIGH_RISK,
+            "STATE_ADMIN"                : S.STATE_ADMIN,
+            "DECAY_AMOUNT"               : S.DECAY_AMOUNT,
+            "TAB_SWITCH_SCORE"           : S.TAB_SWITCH_SCORE,
+            "TAB_SWITCH_TERMINATE_COUNT" : S.TAB_SWITCH_TERMINATE_COUNT,
+            "GAZE_SCORE"                 : S.GAZE_SCORE,
+            "PHONE_SCORE_2ND"            : S.PHONE_SCORE_2ND,
+            "PHONE_SCORE_3RD"            : S.PHONE_SCORE_3RD,
+            "BOOK_SCORE"                 : S.BOOK_SCORE,
+            "HEADPHONE_SCORE"            : S.HEADPHONE_SCORE,
+            "EARBUD_SCORE"               : S.EARBUD_SCORE,
+            "MULTI_PEOPLE_SCORE_2ND"     : S.MULTI_PEOPLE_SCORE_2ND,
+            "MULTI_PEOPLE_SCORE_3RD"     : S.MULTI_PEOPLE_SCORE_3RD,
+            "NO_PERSON_SCORE_1"          : S.NO_PERSON_SCORE_1,
+            "NO_PERSON_SCORE_2"          : S.NO_PERSON_SCORE_2,
+            "NO_PERSON_DUR_1"            : S.NO_PERSON_DUR_1,
+            "NO_PERSON_DUR_2"            : S.NO_PERSON_DUR_2,
+            "MULTI_PEOPLE_TERMINATE_S"   : S.MULTI_PEOPLE_TERMINATE_S,
+            "NO_PERSON_TERMINATE_S"      : S.NO_PERSON_TERMINATE_S,
+            "FAKE_PRESENCE_SCORE_1"      : S.FAKE_PRESENCE_SCORE_1,
+            "FAKE_PRESENCE_SCORE_2"      : S.FAKE_PRESENCE_SCORE_2,
+            "FAKE_PRESENCE_DUR_1"        : S.FAKE_PRESENCE_DUR_1,
+            "FAKE_PRESENCE_DUR_2"        : S.FAKE_PRESENCE_DUR_2,
+        },
+        "cooldowns": {
+            "score" : dict(S.SCORE_COOLDOWNS),
+            "warn"  : dict(A.WARN_COOLDOWNS),
+            "api"   : dict(A.API_COOLDOWNS),
+        },
+    }
+
+
+@app.get("/admin/settings")
+async def get_admin_settings():
+    """Return all tunable settings, categorised for the admin UI."""
+    return JSONResponse(_get_all_settings())
+
+
+@app.post("/admin/settings")
+async def post_admin_settings(request: Request):
+    """
+    Apply admin setting changes.
+
+    Body shape:
+      { "detection": {...}, "thresholds": {...}, "objects": {...},
+        "scoring": {...}, "cooldowns": {"score": {...}, "warn": {...}, "api": {...}} }
+
+    - detection keys  → coordinator.exam_config   (immediate, all sessions)
+    - threshold/object keys → coordinator.runtime_settings (new sessions)
+    - scoring keys    → mutate settings.scoring module (immediate, all score events)
+    - cooldown keys   → mutate settings.alerts dicts  (immediate)
+    """
+    import settings.scoring as S
+    import settings.alerts  as A
+
+    body = await request.json()
+    changed: dict = {}
+
+    # ── Detection toggles (immediate) ────────────────────────────────────────
+    if "detection" in body and coordinator is not None:
+        updated = coordinator.update_exam_config(body["detection"])
+        changed["detection"] = updated
+
+    # ── Thresholds — live update on all active sessions + new sessions ──────────
+    # HeadPoseDetector now accepts explicit constructor params (min_face_width etc.)
+    # which are sourced from session_cfg at session creation.  So:
+    #   (1) coordinator.runtime_settings → new sessions pick up the value automatically
+    #   (2) direct setattr on each active session.head_detector → immediate live effect
+    # No module-level patching needed.
+    _HEAD_DETECTOR_ATTRS = {
+        "MIN_FACE_WIDTH", "MIN_FACE_HEIGHT",
+        "LOOK_AWAY_YAW", "LOOK_DOWN_PITCH", "LOOK_UP_PITCH",
+        "GAZE_LEFT", "GAZE_RIGHT", "EAR_THRESHOLD",
+        "BLINK_MIN_DURATION_S", "BLINK_MAX_DURATION_S",
+    }
+    if "thresholds" in body and coordinator is not None:
+        for k, v in body["thresholds"].items():
+            v = float(v)
+            # New sessions: stored in runtime_settings and merged into session_cfg at creation.
+            coordinator.runtime_settings[k] = v
+            # Active sessions: patch head_detector instance directly for immediate effect.
+            for session in coordinator.sessions.values():
+                hd = session.head_detector
+                if k in _HEAD_DETECTOR_ATTRS and hasattr(hd, k):
+                    setattr(hd, k, v)
+                elif k == "LOOKING_AWAY_THRESHOLD":
+                    session.head_tracker.threshold = v
+                elif k == "GAZE_THRESHOLD":
+                    session._cfg["GAZE_THRESHOLD"] = v
+        changed["thresholds"] = {k: float(v) for k, v in body["thresholds"].items()}
+
+    # ── Object settings (new sessions only — obj_tracker built at session init) ─
+    if "objects" in body and coordinator is not None:
+        for k, v in body["objects"].items():
+            coordinator.runtime_settings[k] = v
+        changed["objects"] = {k: v for k, v in body["objects"].items()}
+
+    # ── Scoring constants (immediate via module mutation) ─────────────────────
+    _SCORE_FLOATS = {
+        "STATE_WARNING", "STATE_HIGH_RISK", "STATE_ADMIN", "DECAY_AMOUNT",
+        "TAB_SWITCH_SCORE", "GAZE_SCORE", "PHONE_SCORE_2ND", "PHONE_SCORE_3RD",
+        "BOOK_SCORE", "HEADPHONE_SCORE", "EARBUD_SCORE",
+        "MULTI_PEOPLE_SCORE_2ND", "MULTI_PEOPLE_SCORE_3RD",
+        "NO_PERSON_SCORE_1", "NO_PERSON_SCORE_2",
+        "NO_PERSON_DUR_1", "NO_PERSON_DUR_2",
+        "MULTI_PEOPLE_TERMINATE_S", "NO_PERSON_TERMINATE_S",
+        "FAKE_PRESENCE_SCORE_1", "FAKE_PRESENCE_SCORE_2",
+        "FAKE_PRESENCE_DUR_1", "FAKE_PRESENCE_DUR_2",
+    }
+    _SCORE_INTS = {"TAB_SWITCH_TERMINATE_COUNT"}
+    if "scoring" in body:
+        for k, v in body["scoring"].items():
+            if k in _SCORE_FLOATS and hasattr(S, k):
+                setattr(S, k, float(v))
+                changed.setdefault("scoring", {})[k] = float(v)
+            elif k in _SCORE_INTS and hasattr(S, k):
+                setattr(S, k, int(v))
+                changed.setdefault("scoring", {})[k] = int(v)
+
+    # ── Cooldowns (immediate via dict mutation) ───────────────────────────────
+    if "cooldowns" in body:
+        cd = body["cooldowns"]
+        if "score" in cd:
+            S.SCORE_COOLDOWNS.update({k: float(v) for k, v in cd["score"].items()})
+            changed.setdefault("cooldowns", {})["score"] = dict(cd["score"])
+        if "warn" in cd:
+            A.WARN_COOLDOWNS.update({k: float(v) for k, v in cd["warn"].items()})
+            changed.setdefault("cooldowns", {})["warn"] = dict(cd["warn"])
+        if "api" in cd:
+            A.API_COOLDOWNS.update({k: float(v) for k, v in cd["api"].items()})
+            changed.setdefault("cooldowns", {})["api"] = dict(cd["api"])
+
+    logger.info("Admin settings updated: %s", list(changed.keys()))
+    return JSONResponse({"ok": True, "changed": changed})
+
 
 @app.get("/analysis")
 async def analysis():
@@ -747,8 +1000,8 @@ async def offer(request: Request):
     file_prefix = f"{ts}_{device_label}"
 
     session: "ProctorSession | None" = None
-    if MODEL_ENABLED and coordinator is not None:
-        session_cfg = {**_session_config, **detection_override}
+    if coordinator is not None:
+        session_cfg = {**_session_config, **coordinator.runtime_settings, **detection_override}
         reports_dir = Path("reports") / file_prefix
         session = ProctorSession(
             session_id       = device_label,
@@ -855,7 +1108,7 @@ async def offer(request: Request):
         logger.info("[%s] state → %s", device_label, state)
 
         if state in ("failed", "closed", "disconnected"):
-            if MODEL_ENABLED and coordinator is not None:
+            if coordinator is not None:
                 coordinator.remove_session(pc_id)
             stream_stats.pop(pc_id, None)
             snapshots.pop(pc_id, None)

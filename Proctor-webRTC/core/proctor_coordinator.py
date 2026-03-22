@@ -61,21 +61,19 @@ class ProctorCoordinator:
         model_path:       str   = "finalBestV5.pt",
         max_sessions:     int   = 5,
         tick_rate:        int   = TICK_RATE,
-        device:           str   = "cpu",
         default_conf:     float = 0.50,
         person_conf:      float = 0.30,
         phone_conf:       float = 0.65,
         book_conf:        float = 0.70,
         audio_conf:       float = 0.41,
-        half:             bool  = False,
-        warmup_frames:    int   = 0,
-        min_vram_gb:      float = 1.5,
+        half:             bool  = True,
+        warmup_frames:    int   = 3,
+        min_vram_gb:      float = 2.0,
         imgsz:            int   = 640,
         mediapipe_stride: int   = 1,
     ):
         self.detector = ObjectDetector(
             model_path    = model_path,
-            device        = device,
             default_conf  = default_conf,
             person_conf   = person_conf,
             phone_conf    = phone_conf,
@@ -96,6 +94,10 @@ class ProctorCoordinator:
         # Exam-level detection config — admin can update this at runtime.
         # All sessions hold a reference to this dict, so changes apply immediately.
         self.exam_config: dict = {}
+
+        # Runtime setting overrides — merged into session_cfg at session creation.
+        # Applies to new sessions only (thresholds, vote windows, etc.).
+        self.runtime_settings: dict = {}
 
         # Thread pool for MediaPipe (FaceMesh → HeadPose → Lip).
         # MediaPipe doesn't release the GIL so threads run serially, but the pool

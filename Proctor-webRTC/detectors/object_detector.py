@@ -71,106 +71,58 @@ def merge_by_class(detections, classes, iou_threshold=0.5):
 _ALLOWED = {"person", "cell_phone", "book", "headphone", "earbud"}
 
 
-_MIN_VRAM_GB = 1.5   # overridden by ObjectDetector.__init__ from config
-
-
-def _resolve_device(device: str, min_vram_gb: float = _MIN_VRAM_GB) -> tuple[str, str]:
-    """
-    Resolve the inference device, returning (device_str, reason).
-
-    "auto" priority order:
-      1. CUDA available + free VRAM >= min_vram_gb  → cuda   (NVIDIA / RunPod)
-      2. CUDA unavailable, MPS available            → mps    (Apple Silicon M-series)
-      3. Otherwise                                  → cpu
-
-    Explicit choices:
-      "cuda" → force NVIDIA GPU (warns if VRAM low, falls back to CPU if unavailable)
-      "mps"  → force Apple GPU  (falls back to CPU if unavailable)
-      "cpu"  → always CPU
-    """
-    if device == "cpu":
-        return "cpu", "forced via --device cpu"
-
-    # ── Explicit MPS ──────────────────────────────────────────────────────────
-    if device == "mps":
-        if torch.backends.mps.is_available():
-            return "mps", "forced via --device mps (Apple Metal)"
-        logger.warning("--device mps requested but MPS is not available — falling back to CPU")
-        return "cpu", "MPS not available"
-
-    cuda_ok = torch.cuda.is_available()
-
-    # ── No CUDA: try MPS (Apple Silicon) before giving up on GPU ─────────────
-    if not cuda_ok:
-        if device == "cuda":
-            logger.warning(
-                "--device cuda requested but CUDA is not available — falling back to CPU"
-            )
-            return "cpu", "CUDA not available"
-        # auto: try MPS next
-        if torch.backends.mps.is_available():
-            return "mps", "Apple MPS (Metal) — CUDA not available"
-        return "cpu", "no GPU available (CUDA and MPS both absent)"
-
-    # ── CUDA is present — check free VRAM before committing ──────────────────
+def _ensure_cuda(min_vram_gb: float) -> None:
+    """Verify CUDA is available and log VRAM. Raises RuntimeError if no CUDA."""
+    if not torch.cuda.is_available():
+        raise RuntimeError(
+            "CUDA is required but not available. "
+            "Run on a GPU instance (nvidia/cuda Docker image with --gpus all)."
+        )
     try:
         props      = torch.cuda.get_device_properties(0)
         total_vram = props.total_memory / 1e9
         used_vram  = torch.cuda.memory_allocated(0) / 1e9
         free_vram  = total_vram - used_vram
-
-        if device == "auto" and free_vram < min_vram_gb:
-            reason = f"free VRAM {free_vram:.1f} GB < {min_vram_gb:.1f} GB minimum"
-            logger.warning("Auto device: falling back to CPU — %s", reason)
-            return "cpu", reason
-
-        if device == "cuda" and free_vram < min_vram_gb:
+        if free_vram < min_vram_gb:
             logger.warning(
-                "--device cuda: free VRAM is low (%.1f GB) — may cause OOM or system slowdown",
-                free_vram,
+                "Free VRAM %.1f GB is below minimum %.1f GB — may cause OOM",
+                free_vram, min_vram_gb,
             )
-
-        return "cuda", f"GPU {props.name}  VRAM {free_vram:.1f}/{total_vram:.1f} GB free"
-
+        logger.info(
+            "CUDA device: %s  VRAM %.1f/%.1f GB free  compute=%d.%d",
+            props.name, free_vram, total_vram, props.major, props.minor,
+        )
     except Exception as exc:
-        logger.warning("VRAM check failed (%s) — falling back to CPU", exc)
-        return "cpu", "VRAM check failed"
+        logger.warning("VRAM check failed: %s", exc)
 
 
 class ObjectDetector:
     """
-    YOLO-based object detector with GPU/CPU auto-selection.
+    YOLO-based object detector — CUDA GPU required.
 
     GPU performance features:
-      • FP16 (half-precision) inference  — ~2× throughput, ~½ VRAM  (CUDA only)
-      • Warmup forward passes at startup — pre-compiles CUDA kernels,
-        eliminates first-frame latency spike
+      • FP16 (half-precision) inference  — ~2× throughput, ~½ VRAM
+      • Warmup forward passes at startup — pre-compiles CUDA kernels
       • Batch inference                  — one YOLO forward pass for N candidates
-
-    device options (auto-detected or explicit):
-      "auto"  — CUDA → MPS → CPU  (picks best available, default)
-      "cuda"  — force NVIDIA GPU  (RunPod / Linux with NVIDIA)
-      "mps"   — force Apple GPU   (MacBook M-series)
-      "cpu"   — force CPU
     """
 
     def __init__(
         self,
         model_path:    str   = "finalBestV5.pt",
-        device:        str   = "cpu",
+        device:        str   = "cuda",
         default_conf:  float = 0.50,
         person_conf:   float = 0.30,
         phone_conf:    float = 0.65,
         book_conf:     float = 0.70,
         audio_conf:    float = 0.41,
-        half:          bool  = False,   # disabled by default — opt-in for confirmed GPU setups
-        warmup_frames: int   = 0,       # disabled by default — avoids blocking event loop at startup
-        min_vram_gb:   float = 1.5,     # auto-mode: fall back to CPU below this free VRAM
+        half:          bool  = True,    # FP16 by default on GPU
+        warmup_frames: int   = 0,
+        min_vram_gb:   float = 2.0,
         imgsz:         int   = 640,     # inference resolution; set at load time, NOT at call time
     ):
-        # Resolve device with VRAM safety check
-        self.device, _reason = _resolve_device(device, min_vram_gb)
-        self.model = YOLO(model_path)
+        _ensure_cuda(min_vram_gb)
+        self.device = "cuda"
+        self.model  = YOLO(model_path)
         self.model.to(self.device)
 
         # Set inference resolution at load time — safe for batch mode.
@@ -180,24 +132,11 @@ class ObjectDetector:
             self.model.overrides['imgsz'] = imgsz
             logger.info("ObjectDetector: inference imgsz set to %d (load-time override)", imgsz)
 
-        # FP16: CUDA only — CPU half-precision is slower; MPS float16 support
-        # is still maturing across PyTorch versions so we keep MPS on FP32.
-        self._half = half and self.device == "cuda"
+        self._half = half
         if self._half:
             self.model.half()
 
-        logger.info(
-            "ObjectDetector ready  device=%s  half=%s  reason=\"%s\"",
-            self.device, self._half, _reason,
-        )
-        if self.device == "cuda" and torch.cuda.is_available():
-            props = torch.cuda.get_device_properties(0)
-            logger.info(
-                "GPU: %s  VRAM total=%.1f GB  compute=%d.%d",
-                props.name, props.total_memory / 1e9, props.major, props.minor,
-            )
-        elif self.device == "mps":
-            logger.info("GPU: Apple MPS (Metal Performance Shaders)")
+        logger.info("ObjectDetector ready  device=cuda  half=%s", self._half)
 
         self.default_conf     = default_conf
         self.person_conf      = person_conf
@@ -225,11 +164,13 @@ class ObjectDetector:
     def _warmup(self, n: int) -> None:
         """Run N dummy inference passes. Called in a background thread."""
         logger.info("ObjectDetector: warmup starting (%d pass(es))…", n)
+        # uint8 input — YOLO's pre-processing converts to float32 then to half
+        # internally, matching the FP16 model weights without dtype mismatch.
         dummy = np.zeros((480, 640, 3), dtype=np.uint8)
         t0 = time.perf_counter()
         for _ in range(n):
             try:
-                self.model([dummy], verbose=False, device=self.device, imgsz=640)
+                self.model([dummy], verbose=False, device=self.device)
             except Exception as exc:
                 logger.warning("ObjectDetector: warmup pass failed — %s", exc)
                 break
@@ -250,33 +191,20 @@ class ObjectDetector:
     @property
     def device_info(self) -> dict:
         """Return human-readable device information for /system/report."""
-        info: dict = {
-            "device"          : self.device,
-            "half_precision"  : self._half,
-            "cuda_available"  : torch.cuda.is_available(),
-            "mps_available"   : torch.backends.mps.is_available(),
-            "batch_supported" : self._supports_batch,
-            "total_batches"   : self._total_batches,
-            "total_frames"    : self._total_frames,
-            "last_batch_ms"   : round(self._last_batch_ms, 2),
+        props = torch.cuda.get_device_properties(0)
+        return {
+            "device"             : "cuda",
+            "half_precision"     : self._half,
+            "batch_supported"    : self._supports_batch,
+            "total_batches"      : self._total_batches,
+            "total_frames"       : self._total_frames,
+            "last_batch_ms"      : round(self._last_batch_ms, 2),
+            "gpu_name"           : props.name,
+            "gpu_vram_gb"        : round(props.total_memory / 1e9, 1),
+            "gpu_compute"        : f"{props.major}.{props.minor}",
+            "gpu_mem_alloc_mb"   : round(torch.cuda.memory_allocated(0) / 1024 / 1024, 1),
+            "gpu_mem_reserved_mb": round(torch.cuda.memory_reserved(0) / 1024 / 1024, 1),
         }
-        if self.device == "cuda" and torch.cuda.is_available():
-            props = torch.cuda.get_device_properties(0)
-            info.update({
-                "gpu_name"           : props.name,
-                "gpu_vram_gb"        : round(props.total_memory / 1e9, 1),
-                "gpu_compute"        : f"{props.major}.{props.minor}",
-                "gpu_mem_alloc_mb"   : round(torch.cuda.memory_allocated(0) / 1024 / 1024, 1),
-                "gpu_mem_reserved_mb": round(torch.cuda.memory_reserved(0) / 1024 / 1024, 1),
-            })
-        elif self.device == "mps":
-            info["gpu_name"] = "Apple MPS (Metal)"
-            try:
-                info["mps_alloc_mb"]  = round(torch.mps.current_allocated_memory() / 1024 / 1024, 1)
-                info["mps_driver_mb"] = round(torch.mps.driver_allocated_memory()   / 1024 / 1024, 1)
-            except Exception:
-                pass
-        return info
 
     def _parse_result(self, r) -> list[dict]:
         detections = []

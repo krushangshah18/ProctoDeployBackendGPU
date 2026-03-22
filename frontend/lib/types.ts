@@ -50,6 +50,8 @@ export interface SessionInfo {
   alert_count?: number;
   warning_count?: number;
   terminated?: boolean;
+  /** Frontend-only: which backend URL this session belongs to. */
+  backendUrl?: string;
 }
 
 export interface DetectionConfig {
@@ -160,6 +162,35 @@ export interface SystemReport extends MetricsSnapshot {
   yolo_performance: MetricsSnapshot["yolo"];
   system_resources: MetricsSnapshot["system"];
   config: Record<string, unknown>;
+}
+
+// ── Admin Settings ────────────────────────────────────────────────────────────
+
+export interface AdminSettings {
+  detection: Record<string, boolean>;
+  thresholds: Record<string, number>;
+  objects: Record<string, number>;
+  scoring: Record<string, number>;
+  cooldowns: {
+    score: Record<string, number>;
+    warn:  Record<string, number>;
+    api:   Record<string, number>;
+  };
+}
+
+export interface ReportMeta {
+  id: string;
+  session_id: string;
+  session_start: string;
+  session_end: string;
+  duration_s: number;
+  risk_state: RiskState;
+  final_score: number;
+  terminated: boolean;
+  alert_count: number;
+  warning_count: number;
+  size_kb: number;
+  proof_count: number;
 }
 
 export interface SessionReport {

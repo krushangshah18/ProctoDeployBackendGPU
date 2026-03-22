@@ -1,0 +1,511 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>AI Proctor — Performance Benchmark Report</title>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+<style>
+  * { box-sizing:border-box; margin:0; padding:0 }
+  body { font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;
+          background:#0f172a; color:#e2e8f0; padding:24px }
+  h1   { font-size:1.8rem; margin-bottom:4px }
+  h2   { font-size:1.2rem; color:#94a3b8; margin:32px 0 16px;
+          border-bottom:1px solid #1e293b; padding-bottom:8px }
+  h3   { font-size:0.95rem; color:#94a3b8; margin-bottom:12px }
+  .subtitle { color:#64748b; margin-bottom:32px; font-size:0.9rem }
+  .grid-3  { display:grid; grid-template-columns:repeat(3,1fr); gap:16px; margin-bottom:24px }
+  .grid-2  { display:grid; grid-template-columns:repeat(2,1fr); gap:16px; margin-bottom:24px }
+  .card    { background:#1e293b; border-radius:12px; padding:20px }
+  .card-hl { background:#1e293b; border-radius:12px; padding:20px;
+              border:2px solid #f59e0b }
+  .stat-label { font-size:0.75rem; color:#64748b; text-transform:uppercase; letter-spacing:.05em }
+  .stat-value { font-size:2rem; font-weight:700; margin:4px 0 }
+  .stat-sub   { font-size:0.8rem; color:#94a3b8 }
+  .chart-grid { display:grid; grid-template-columns:repeat(2,1fr); gap:16px; margin-bottom:24px }
+  .chart-card { background:#1e293b; border-radius:12px; padding:20px }
+  table  { width:100%; border-collapse:collapse; font-size:0.83rem }
+  th     { background:#0f172a; padding:10px 12px; text-align:left; color:#64748b;
+            font-size:0.73rem; text-transform:uppercase; letter-spacing:.05em }
+  td     { padding:9px 12px; border-bottom:1px solid #0f172a }
+  tr:hover td { background:#263548 }
+  .info-grid { display:grid; grid-template-columns:repeat(2,1fr); gap:8px; font-size:0.85rem }
+  .info-row  { display:flex; justify-content:space-between; padding:6px 0;
+                border-bottom:1px solid #0f172a }
+  .info-key  { color:#64748b }
+  .info-val  { color:#e2e8f0; font-weight:500 }
+  .note      { font-size:0.8rem; color:#64748b; margin-top:8px }
+</style>
+</head>
+<body>
+
+<h1>AI Proctor — Capacity Benchmark Report</h1>
+<p class="subtitle">Generated 2026-03-22 16:20:05 · http://13.233.156.139:8000 + http://13.233.156.139:8001</p>
+
+<h2>Summary</h2>
+<div class="grid-3">
+  <div class="card-hl">
+    <div class="stat-label">Max Safe Concurrency</div>
+    <div class="stat-value" style="color:#f59e0b">2</div>
+    <div class="stat-sub">clients/instance at stable tick rate</div>
+  </div>
+  <div class="card">
+    <div class="stat-label">Primary Bottleneck</div>
+    <div class="stat-value" style="color:#f59e0b;font-size:1.4rem">TICK</div>
+    <div class="stat-sub">first resource to saturate</div>
+  </div>
+  <div class="card">
+    <div class="stat-label">Levels Tested</div>
+    <div class="stat-value">3</div>
+    <div class="stat-sub">dual instance · 30s warmup + 120s steady</div>
+  </div>
+</div>
+
+<h2>System Information</h2>
+<div class="grid-2">
+  <div class="card">
+    <h3>Environment</h3>
+    <div class="info-grid">
+      <div class="info-row"><span class="info-key">Python</span><span class="info-val">?</span></div>
+      <div class="info-row"><span class="info-key">Platform</span><span class="info-val">Linux-6.8.0-1047-aws-x86_64-with-glibc2.35</span></div>
+      <div class="info-row"><span class="info-key">CPU cores</span><span class="info-val">?</span></div>
+      <div class="info-row"><span class="info-key">RAM total</span><span class="info-val">? GB</span></div>
+    </div>
+  </div>
+  <div class="card">
+    <h3>Inference Device</h3>
+    <div class="info-grid">
+      <div class="info-row"><span class="info-key">Device</span><span class="info-val">cuda</span></div>
+      <div class="info-row"><span class="info-key">FP16</span><span class="info-val">True</span></div>
+      <div class="info-row"><span class="info-key">GPU</span><span class="info-val">Tesla T4</span></div>
+      <div class="info-row"><span class="info-key">VRAM total</span><span class="info-val">15.6 GB</span></div>
+    </div>
+  </div>
+</div>
+
+<h2>Performance Charts</h2>
+<div class="chart-grid">
+  <div class="chart-card">
+    <h3>Tick Latency vs Concurrency</h3>
+    <canvas id="tickChart"></canvas>
+  </div>
+  <div class="chart-card">
+    <h3>YOLO Batch Latency vs Concurrency</h3>
+    <canvas id="yoloChart"></canvas>
+  </div>
+  <div class="chart-card">
+    <h3>CPU Usage vs Concurrency</h3>
+    <canvas id="cpuChart"></canvas>
+  </div>
+  <div class="chart-card">
+    <h3>Tick Rate Maintenance vs Concurrency</h3>
+    <canvas id="hzChart"></canvas>
+  </div>
+  
+        <div class="chart-card">
+          <h3>GPU Utilisation vs Concurrency</h3>
+          <canvas id="gpuChart"></canvas>
+        </div>
+        <div class="chart-card">
+          <h3>VRAM Usage vs Concurrency</h3>
+          <canvas id="vramChart"></canvas>
+        </div>
+  
+  <div class="chart-card">
+    <h3>MediaPipe Latency vs Concurrency</h3>
+    <canvas id="mpChart"></canvas>
+  </div>
+</div>
+
+<h2>Timing Breakdown — Where Does Each Tick Go?</h2>
+<p class="note" style="margin-bottom:16px">
+  YOLO (GPU) and MediaPipe (CPU) run <strong>concurrently</strong>.
+  Wall-clock concurrent cost = max(YOLO, MP).
+  Overhead = tick_avg − max(YOLO, MP) — includes frame snapshot, state update, SSE push, asyncio scheduling.
+  If overhead is large, the bottleneck is not inference.
+</p>
+<div class="chart-grid">
+  <div class="chart-card">
+    <h3>Timing Breakdown Chart</h3>
+    <canvas id="breakdownChart"></canvas>
+  </div>
+  <div class="card" style="overflow-x:auto">
+    <h3>Timing Breakdown Table</h3>
+    <table>
+      <thead>
+        <tr>
+          <th>Clients</th>
+          <th style="color:#8b5cf6">YOLO avg</th><th style="color:#8b5cf6">YOLO p95</th><th style="color:#8b5cf6">YOLO p99</th>
+          <th style="color:#f97316">MP avg</th><th style="color:#f97316">MP p95</th>
+          <th style="color:#64748b">Overhead</th>
+          <th style="color:#60a5fa">Tick avg</th><th style="color:#f87171">Tick p95</th><th style="color:#ef4444">Tick p99</th>
+          <th>Bottleneck</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td>1</td>
+          <td style="color:#8b5cf6">16.6</td>
+          <td style="color:#8b5cf6">17.6</td>
+          <td style="color:#8b5cf6">18.6</td>
+          <td style="color:#f97316">24.9</td>
+          <td style="color:#f97316">39.0</td>
+          <td style="color:#64748b">0.0</td>
+          <td style="color:#60a5fa">18.1</td>
+          <td style="color:#f87171">27.1</td>
+          <td style="color:#ef4444">30.5</td>
+          <td style="color:#f97316;font-weight:bold">MEDIAPIPE</td>
+        </tr>
+        <tr>
+          <td>2</td>
+          <td style="color:#8b5cf6">28.1</td>
+          <td style="color:#8b5cf6">31.5</td>
+          <td style="color:#8b5cf6">31.6</td>
+          <td style="color:#f97316">32.2</td>
+          <td style="color:#f97316">34.6</td>
+          <td style="color:#64748b">0.0</td>
+          <td style="color:#60a5fa">31.6</td>
+          <td style="color:#f87171">44.6</td>
+          <td style="color:#ef4444">56.8</td>
+          <td style="color:#f97316;font-weight:bold">MEDIAPIPE</td>
+        </tr>
+        <tr>
+          <td>3</td>
+          <td style="color:#8b5cf6">57.9</td>
+          <td style="color:#8b5cf6">61.6</td>
+          <td style="color:#8b5cf6">61.8</td>
+          <td style="color:#f97316">59.6</td>
+          <td style="color:#f97316">63.1</td>
+          <td style="color:#64748b">8.2</td>
+          <td style="color:#60a5fa">67.8</td>
+          <td style="color:#f87171">108.8</td>
+          <td style="color:#ef4444">306.1</td>
+          <td style="color:#f97316;font-weight:bold">MEDIAPIPE</td>
+        </tr></tbody>
+    </table>
+    <p class="note">All values in ms. Bottleneck = whichever of YOLO / MediaPipe takes longer this level.</p>
+  </div>
+</div>
+
+
+<h2>Frame Rate Analysis (Observed per User)</h2>
+<p style="color:#64748b;font-size:0.85rem;margin-bottom:16px">
+  WebRTC FPS observed at the server per session, bucketed by concurrent session count.
+  Drop below ~20 fps means the server's aiortc decode is under pressure or the network is throttling.
+</p>
+<div class="chart-grid">
+  
+        <div class="chart-card">
+          <h3>Observed WebRTC FPS per User vs Concurrency</h3>
+          <canvas id="fpsChart"></canvas>
+        </div>
+  <div class="card" style="overflow-x:auto">
+    <h3>FPS by Concurrency Level</h3>
+    <table>
+      <thead>
+        <tr>
+          <th>Concurrent</th>
+          <th>Inst 1 FPS (avg / min–max)</th>
+          <th>Inst 2 FPS (avg / min–max)</th>
+          <th>Samples</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td>2</td>
+          <td style="color:#ef4444">—</td>
+          <td>20.1 <span style='color:#64748b;font-size:0.8em'>(18.7–24.8)</span></td>
+          <td>0</td>
+        </tr>
+        <tr>
+          <td>3</td>
+          <td style="color:#ef4444">—</td>
+          <td>19.9 <span style='color:#64748b;font-size:0.8em'>(14.3–29.1)</span></td>
+          <td>0</td>
+        </tr></tbody>
+    </table>
+  </div>
+</div>
+
+<h2>Detailed Results Table</h2>
+<div class="card" style="overflow-x:auto">
+  <table>
+    <thead>
+      <tr>
+        <th>Clients/Inst</th><th>Total</th>
+        <th>Tick avg</th><th>Tick p95</th><th>Tick p99</th>
+        <th>YOLO avg</th><th>YOLO p95</th><th>YOLO p99</th>
+        <th>MP avg</th><th>MP p95</th>
+        <th>Overhead</th>
+        <th>VAD avg</th>
+        <th>CPU avg</th><th>RAM(MB)</th>
+        <th>GPU</th><th>VRAM</th>
+        <th>Eff Hz</th><th>Tick OK</th>
+      </tr>
+    </thead>
+    <tbody>
+        <tr>
+          <td>1</td>
+          <td>2</td>
+          <td>18.1</td>
+          <td>27.1</td>
+          <td style="color:#ef4444">30.5</td>
+          <td>16.6</td>
+          <td>17.6</td>
+          <td style="color:#ef4444">18.6</td>
+          <td>24.9</td>
+          <td>39.0</td>
+          <td style="color:#64748b">0.0</td>
+          <td>1.0</td>
+          <td>22.3%</td>
+          <td>3076</td>
+          <td>10.9%</td>
+          <td>52MB</td>
+          <td>55.2</td>
+          <td style="color:#22c55e;font-weight:bold">✓ 100%</td>
+        </tr>
+        <tr>
+          <td>2</td>
+          <td>4</td>
+          <td>31.6</td>
+          <td>44.6</td>
+          <td style="color:#ef4444">56.8</td>
+          <td>28.1</td>
+          <td>31.5</td>
+          <td style="color:#ef4444">31.6</td>
+          <td>32.2</td>
+          <td>34.6</td>
+          <td style="color:#64748b">0.0</td>
+          <td>1.2</td>
+          <td>42.3%</td>
+          <td>3126</td>
+          <td>18.3%</td>
+          <td>55MB</td>
+          <td>31.7</td>
+          <td style="color:#22c55e;font-weight:bold">✓ 100%</td>
+        </tr>
+        <tr>
+          <td>3</td>
+          <td>6</td>
+          <td>67.8</td>
+          <td>108.8</td>
+          <td style="color:#ef4444">306.1</td>
+          <td>57.9</td>
+          <td>61.6</td>
+          <td style="color:#ef4444">61.8</td>
+          <td>59.6</td>
+          <td>63.1</td>
+          <td style="color:#64748b">8.2</td>
+          <td>2.0</td>
+          <td>68.2%</td>
+          <td>3391</td>
+          <td>27.8%</td>
+          <td>58MB</td>
+          <td>14.7</td>
+          <td style="color:#f59e0b;font-weight:bold">⚠ 95%</td>
+        </tr></tbody>
+  </table>
+</div>
+
+
+<h2>Dual Instance Side-by-Side</h2>
+<div class="card" style="overflow-x:auto">
+  <table>
+    <thead>
+      <tr>
+        <th>Clients</th>
+        <th>Tick avg/p95/p99 (ms)</th>
+        <th>YOLO avg/p95 (ms)</th>
+        <th>MP avg/p95 (ms)</th>
+        <th>CPU avg/max</th>
+        <th>GPU avg</th>
+        <th>Eff Hz</th>
+        <th>Tick OK%</th>
+      </tr>
+    </thead>
+    <tbody>
+        <tr style="background:#1e40af22">
+          <td>1 <span style="color:#64748b;font-size:0.8em">(Inst 1)</span></td>
+          <td>18.1 / 27.1 / 30.5</td>
+          <td>16.6 / 17.6</td>
+          <td>24.9 / 39.0</td>
+          <td>22.3% / 23.4%</td>
+          <td>10.9%</td>
+          <td>55.2</td>
+          <td style="color:#22c55e">100%</td>
+        </tr>
+        <tr style="background:#065f4622">
+          <td>1 <span style="color:#64748b;font-size:0.8em">(Inst 2)</span></td>
+          <td>17.6 / 24.1 / 25.7</td>
+          <td>16.7 / 18.0</td>
+          <td>22.4 / 22.9</td>
+          <td>22.3% / 23.9%</td>
+          <td>10.8%</td>
+          <td>56.7</td>
+          <td style="color:#22c55e">100%</td>
+        </tr>
+        <tr style="background:#1e40af22">
+          <td>2 <span style="color:#64748b;font-size:0.8em">(Inst 1)</span></td>
+          <td>31.6 / 44.6 / 56.8</td>
+          <td>28.1 / 31.5</td>
+          <td>32.2 / 34.6</td>
+          <td>42.3% / 47.2%</td>
+          <td>18.3%</td>
+          <td>31.7</td>
+          <td style="color:#22c55e">100%</td>
+        </tr>
+        <tr style="background:#065f4622">
+          <td>2 <span style="color:#64748b;font-size:0.8em">(Inst 2)</span></td>
+          <td>34.0 / 40.0 / 250.8</td>
+          <td>28.4 / 30.8</td>
+          <td>32.2 / 33.9</td>
+          <td>42.3% / 46.1%</td>
+          <td>19.8%</td>
+          <td>29.4</td>
+          <td style="color:#22c55e">98%</td>
+        </tr>
+        <tr style="background:#1e40af22">
+          <td>3 <span style="color:#64748b;font-size:0.8em">(Inst 1)</span></td>
+          <td>67.8 / 108.8 / 306.1</td>
+          <td>57.9 / 61.6</td>
+          <td>59.6 / 63.1</td>
+          <td>68.2% / 71.5%</td>
+          <td>27.8%</td>
+          <td>14.7</td>
+          <td style="color:#f59e0b">95%</td>
+        </tr>
+        <tr style="background:#065f4622">
+          <td>3 <span style="color:#64748b;font-size:0.8em">(Inst 2)</span></td>
+          <td>66.0 / 94.2 / 289.6</td>
+          <td>56.6 / 61.9</td>
+          <td>58.2 / 63.4</td>
+          <td>68.2% / 71.4%</td>
+          <td>30.9%</td>
+          <td>15.2</td>
+          <td style="color:#22c55e">97%</td>
+        </tr></tbody>
+  </table>
+</div>
+
+<h2>Bottleneck Analysis</h2>
+<div class="grid-2">
+  <div class="card">
+    <h3>Resource Saturation Points</h3>
+    <table>
+      <thead><tr><th>Resource</th><th>Saturates</th><th>Threshold</th></tr></thead>
+      <tbody><tr><td>CPU</td><td style='color:#22c55e'>not reached</td><td>85%</td></tr><tr><td>TICK</td><td style='color:#ef4444'>at 3 clients</td><td>95% ok</td></tr><tr><td>YOLO</td><td style='color:#22c55e'>not reached</td><td>200ms</td></tr><tr><td>MEDIAPIPE</td><td style='color:#22c55e'>not reached</td><td>80ms</td></tr><tr><td>RAM</td><td style='color:#22c55e'>not reached</td><td>—MB</td></tr><tr><td>GPU</td><td style='color:#22c55e'>not reached</td><td>85%</td></tr></tbody>
+    </table>
+  </div>
+  <div class="card">
+    <h3>Recommendations</h3>
+    <div style="font-size:0.85rem;line-height:2">
+      <p>• <strong>Max safe</strong>: <span style="color:#f59e0b">2 clients/instance</span></p>
+      <p>• <strong>Primary bottleneck</strong>: TICK saturates first</p>
+      <p>• Tick degradation starts around <strong>3 clients</strong></p>
+      
+      
+    </div>
+  </div>
+</div>
+
+<script>
+const lineOpts = (yLabel, sugMax) => ({
+  responsive:true,
+  plugins:{legend:{labels:{color:'#94a3b8'}}},
+  scales:{
+    x:{ticks:{color:'#64748b'},grid:{color:'#1e293b'},
+       title:{display:true,text:'Concurrent Clients / Instance',color:'#64748b'}},
+    y:{ticks:{color:'#64748b'},grid:{color:'#1e293b'},
+       title:{display:true,text:yLabel,color:'#64748b'},
+       ...(sugMax?{suggestedMax:sugMax}:{})}
+  }
+});
+
+new Chart(document.getElementById('tickChart'), {
+  type:'line', data:{labels:["1", "2", "3"], datasets:[
+    {label:'Tick Avg (Inst1)', data:[18.11, 31.59, 67.85], borderColor:'#60a5fa', backgroundColor:'#60a5fa20', fill:true, tension:0.3},
+    {label:'Tick P95 (Inst1)', data:[27.05, 44.61, 108.82], borderColor:'#f87171', borderDash:[5,5], tension:0.3},
+    {label:'Tick P99 (Inst1)', data:[30.52, 56.81, 306.07], borderColor:'#ef4444', borderDash:[2,4], tension:0.3},
+    {label:'100ms budget',     data:[100, 100, 100], borderColor:'#ef444440', borderDash:[3,3], pointRadius:0}
+    ,{label:'Tick Avg (Inst2)', data:[17.63, 33.96, 66.0], borderColor:'#60a5fa60', borderDash:[5,5], tension:0.3}
+  ]}, options:lineOpts('Latency (ms)', 200)
+});
+
+new Chart(document.getElementById('yoloChart'), {
+  type:'line', data:{labels:["1", "2", "3"], datasets:[
+    {label:'YOLO Avg (Inst1)', data:[16.59, 28.1, 57.88], borderColor:'#a78bfa', backgroundColor:'#a78bfa20', fill:true, tension:0.3},
+    {label:'YOLO P95 (Inst1)', data:[17.6, 31.5, 61.6], borderColor:'#f59e0b', borderDash:[5,5], tension:0.3},
+    {label:'YOLO P99 (Inst1)', data:[18.6, 31.6, 61.8], borderColor:'#ef4444', borderDash:[2,4], tension:0.3}
+    ,{label:'YOLO Avg (Inst2)', data:[16.73, 28.37, 56.61], borderColor:'#a78bfa60', borderDash:[5,5], tension:0.3}
+  ]}, options:lineOpts('Latency (ms)')
+});
+
+new Chart(document.getElementById('cpuChart'), {
+  type:'line', data:{labels:["1", "2", "3"], datasets:[
+    {label:'CPU Avg % (Inst1)', data:[22.3, 42.3, 68.16], borderColor:'#34d399', backgroundColor:'#34d39920', fill:true, tension:0.3},
+    {label:'CPU Max % (Inst1)', data:[23.4, 47.2, 71.5], borderColor:'#f87171', borderDash:[5,5], tension:0.3},
+    {label:'85% threshold',     data:[85, 85, 85], borderColor:'#ef444440', borderDash:[3,3], pointRadius:0}
+    ,{label:'CPU Avg % (Inst2)', data:[22.27, 42.31, 68.2], borderColor:'#34d39960', borderDash:[5,5], tension:0.3}
+  ]}, options:lineOpts('CPU (%)', 100)
+});
+
+new Chart(document.getElementById('hzChart'), {
+  type:'bar', data:{labels:["1", "2", "3"], datasets:[
+    {label:'Tick OK %', data:[100.0, 100.0, 94.9],
+      backgroundColor:[100.0, 100.0, 94.9].map(v=>v>=95?'#22c55e':v>=80?'#f59e0b':'#ef4444')}
+  ]},
+  options:{...lineOpts('% of ticks within budget', 100), plugins:{legend:{labels:{color:'#94a3b8'}}}}
+});
+
+
+        new Chart(document.getElementById('gpuChart'), {
+          type:'line', data:{labels:["1", "2", "3"], datasets:[
+            {label:'GPU Avg % (Inst1)', data:[10.95, 18.27, 27.83], borderColor:'#06b6d4', backgroundColor:'#06b6d420', fill:true, tension:0.3}
+            ,{label:'GPU Avg % (Inst2)', data:[10.83, 19.82, 30.93], borderColor:'#06b6d460', borderDash:[5,5], tension:0.3}
+          ]}, options:lineOpts('GPU Utilisation (%)', 100)
+        });
+        new Chart(document.getElementById('vramChart'), {
+          type:'line', data:{labels:["1", "2", "3"], datasets:[
+            {label:'VRAM Avg MB', data:[51.75, 54.83, 58.13], borderColor:'#8b5cf6', backgroundColor:'#8b5cf620', fill:true, tension:0.3}
+          ]}, options:lineOpts('VRAM (MB)')
+        });
+
+
+new Chart(document.getElementById('mpChart'), {
+  type:'line', data:{labels:["1", "2", "3"], datasets:[
+    {label:'MP Avg (Inst1)', data:[24.94, 32.16, 59.63], borderColor:'#fb923c', backgroundColor:'#fb923c20', fill:true, tension:0.3},
+    {label:'MP P95 (Inst1)', data:[39.0, 34.6, 63.1], borderColor:'#f97316', borderDash:[5,5], tension:0.3}
+    ,{label:'MP Avg (Inst2)', data:[22.39, 32.18, 58.24], borderColor:'#fb923c60', borderDash:[5,5], tension:0.3}
+  ]}, options:lineOpts('MediaPipe Latency (ms)')
+});
+
+
+new Chart(document.getElementById('breakdownChart'), {
+  type:'bar', data:{labels:["1", "2", "3"], datasets:[
+    {label:'YOLO (ms)',      data:[16.59, 28.1, 57.88], backgroundColor:'#8b5cf6aa', stack:'s'},
+    {label:'MediaPipe (ms)', data:[24.94, 32.16, 59.63],   backgroundColor:'#f97316aa', stack:'s'},
+    {label:'Overhead (ms)',  data:[0.0, 0.0, 8.22],  backgroundColor:'#64748baa', stack:'s'}
+  ]},
+  options:{
+    responsive:true,
+    plugins:{legend:{labels:{color:'#94a3b8'}},
+             tooltip:{callbacks:{footer: items => 'Note: YOLO+MP run concurrently — stacked here for breakdown only'}}},
+    scales:{
+      x:{ticks:{color:'#64748b'},grid:{color:'#1e293b'},stacked:true,
+         title:{display:true,text:'Concurrent Clients / Instance',color:'#64748b'}},
+      y:{ticks:{color:'#64748b'},grid:{color:'#1e293b'},stacked:true,
+         title:{display:true,text:'ms (stacked for breakdown only)',color:'#64748b'}}
+    }
+  }
+});
+
+
+        new Chart(document.getElementById('fpsChart'), {
+          type:'line', data:{labels:["2", "3"], datasets:[
+            {label:'Avg FPS (Inst1)',  data:[0, 0],  borderColor:'#34d399', backgroundColor:'#34d39920', fill:false, tension:0.3},
+            {label:'Min FPS (Inst1)',  data:[0, 0],  borderColor:'#f87171', borderDash:[3,3], tension:0.3}
+            ,{label:'Avg FPS (Inst2)', data:[20.05, 19.92], borderColor:'#34d39960', borderDash:[5,5], tension:0.3}
+          ]}, options:lineOpts('Frames per Second (per user)')
+        });
+</script>
+</body>
+</html>

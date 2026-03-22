@@ -2,8 +2,9 @@
 
 import { useEffect, useState } from "react";
 import { use } from "react";
+import { useSearchParams } from "next/navigation";
 import Link from "next/link";
-import { api } from "@/lib/api";
+import { createApi } from "@/lib/api";
 import type { SessionReport, AlertEntry, WarningEntry } from "@/lib/types";
 
 const RISK_COLORS: Record<string, string> = {
@@ -14,7 +15,7 @@ const RISK_COLORS: Record<string, string> = {
   TERMINATED  : "#ef4444",
 };
 
-const BASE = process.env.NEXT_PUBLIC_BACKEND_URL || "http://localhost:8000";
+const DEFAULT_BASE = process.env.NEXT_PUBLIC_BACKEND_URL || "http://localhost:8000";
 
 function StatCard({ label, value, sub, color }: { label: string; value: string | number; sub?: string; color?: string }) {
   return (
@@ -26,7 +27,7 @@ function StatCard({ label, value, sub, color }: { label: string; value: string |
   );
 }
 
-function AlertLogRow({ entry, index }: { entry: AlertEntry; index: number }) {
+function AlertLogRow({ entry, index, backendBase }: { entry: AlertEntry; index: number; backendBase: string }) {
   const [expanded, setExpanded] = useState(false);
   return (
     <div className="rounded-lg overflow-hidden" style={{ background: "var(--surface2)", border: "1px solid #991b1b33" }}>
@@ -49,12 +50,12 @@ function AlertLogRow({ entry, index }: { entry: AlertEntry; index: number }) {
         <div className="px-12 pb-4">
           {entry.proof_type === "audio" ? (
             <audio controls className="w-full">
-              <source src={`${BASE}${entry.proof_url}`} type="audio/wav" />
+              <source src={`${backendBase}${entry.proof_url}`} type="audio/wav" />
             </audio>
           ) : (
             // eslint-disable-next-line @next/next/no-img-element
             <img
-              src={`${BASE}${entry.proof_url}`}
+              src={`${backendBase}${entry.proof_url}`}
               alt="Proof"
               className="rounded-lg max-h-48 object-cover"
               style={{ border: "1px solid var(--border)" }}
@@ -87,6 +88,9 @@ function formatDuration(s: number): string {
 
 export default function ReportPage({ params }: { params: Promise<{ report_id: string }> }) {
   const { report_id } = use(params);
+  const searchParams  = useSearchParams();
+  const backendBase   = searchParams.get("backend") ?? DEFAULT_BASE;
+  const backendApi    = createApi(backendBase);
 
   const [report, setReport]   = useState<SessionReport | null>(null);
   const [loading, setLoading] = useState(true);
@@ -94,10 +98,11 @@ export default function ReportPage({ params }: { params: Promise<{ report_id: st
   const [tab, setTab]         = useState<"alerts" | "warnings" | "summary">("summary");
 
   useEffect(() => {
-    api.getReport(report_id)
+    backendApi.getReport(report_id)
       .then(r => { setReport(r); setLoading(false); })
       .catch(() => { setError("Report not found"); setLoading(false); });
-  }, [report_id]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [report_id, backendBase]);
 
   if (loading) {
     return (
@@ -248,7 +253,7 @@ export default function ReportPage({ params }: { params: Promise<{ report_id: st
           <div className="space-y-2">
             {report.alert_log.length === 0
               ? <p className="text-sm text-center py-8" style={{ color: "var(--muted)" }}>No alerts recorded</p>
-              : report.alert_log.map((entry, i) => <AlertLogRow key={i} entry={entry} index={i} />)
+              : report.alert_log.map((entry, i) => <AlertLogRow key={i} entry={entry} index={i} backendBase={backendBase} />)
             }
           </div>
         )}
