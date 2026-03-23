@@ -10,7 +10,7 @@ YOLO_MODEL_PATH = os.path.join(BASE_DIR, "finalBestV5.pt")
 # Head-pose gates are 1.5–2 s → 10 Hz gives 15+ samples per gate — sufficient.
 # stride=3 + 3 users = exactly 1 MP call per tick (perfect rotation).
 TICK_RATE    = 10   # Hz  — 3 users/container config; revert to 14 if dropping to 2u
-MAX_SESSIONS = 5    # g4dn.xlarge: 3 active + 2 buffer slots per container
+MAX_SESSIONS = 3    # g4dn.xlarge: benchmarked safe limit (4 users fails at 41.4% tick OK)
 
 # ── Detection Toggles ────────────────────────────────────────────────────────
 # Set False to completely skip a detection — no alert, no processing, no score.

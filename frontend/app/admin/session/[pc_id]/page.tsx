@@ -113,7 +113,10 @@ function SessionDetailInner({ params }: { params: Promise<{ pc_id: string }> }) 
   const [debugMode, setDebugMode] = useState(false);
 
   const refreshSnapshot = useCallback(() => {
-    setSnapUrl(`${backendBase}/snapshot/${pc_id}?t=${Date.now()}`);
+    const url = `${backendBase}/snapshot/${pc_id}?t=${Date.now()}`;
+    const preload = new window.Image();
+    preload.onload = () => setSnapUrl(url);
+    preload.src = url;
   }, [pc_id, backendBase]);
 
   const handleDebugToggle = useCallback(async () => {

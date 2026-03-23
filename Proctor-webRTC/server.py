@@ -135,7 +135,7 @@ _cors_origins = [
 app.add_middleware(
     CORSMiddleware,
     allow_origins     = _cors_origins,
-    allow_methods     = ["GET", "POST"],
+    allow_methods     = ["GET", "POST", "DELETE"],
     allow_headers     = ["Content-Type", "Cache-Control"],
     allow_credentials = False,
 )
@@ -209,12 +209,19 @@ class VideoAnalyzerTrack(MediaStreamTrack):
         try:
             img = frame.to_ndarray(format="bgr24")
             img = np.ascontiguousarray(img)
+            # Downscale to 480p if larger — reduces MediaPipe BGR→RGB cost (~2.25×
+            # fewer pixels) and YOLO resize work. YOLO internally letterboxes to 640
+            # regardless, so detection quality is unaffected. Earbud detection should
+            # be retested after this change.
+            if img.shape[0] > 480:
+                img = cv2.resize(img, (854, 480), interpolation=cv2.INTER_LINEAR)
         except Exception as exc:
             logger.debug("[%s] frame decode error (skipping frame): %s", self.pc_id, exc)
             return frame  # keep latest_frame at last good value
 
-        # Encode raw JPEG snapshot at ~5 Hz for admin live-view
-        if now - self._last_snapshot >= 0.2:
+        # Encode raw JPEG snapshot at ~10 Hz for admin live-view
+        # 480p frames are ~2× cheaper to encode so 10 Hz is safe.
+        if now - self._last_snapshot >= 0.1:
             self._last_snapshot = now
             ok, buf = cv2.imencode(".jpg", img, [cv2.IMWRITE_JPEG_QUALITY, 70])
             if ok:

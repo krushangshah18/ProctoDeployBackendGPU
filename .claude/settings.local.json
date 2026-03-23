@@ -2,7 +2,8 @@
   "permissions": {
     "allow": [
       "Bash(ls D:VS CodePocOnAWSProctoDeployBackendGPUload_testbenchmark_*.json)",
-      "Bash(ls:*)"
+      "Bash(ls:*)",
+      "Bash(python3:*)"
     ]
   }
 }
