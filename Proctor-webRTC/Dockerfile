@@ -1,6 +1,6 @@
-# ── Base: CUDA 12.1 + cuDNN 8 runtime on Ubuntu 22.04 ─────────────────────────
+# ── Base: CUDA 12.4 + cuDNN runtime on Ubuntu 22.04 ───────────────────────────
 # Runtime (not devel) is enough — we run inference, not compile CUDA kernels.
-# CUDA 12.1 matches PyTorch 2.3 cu121 wheels.
+# CUDA 12.4 matches PyTorch cu124 wheels installed below.
 FROM nvidia/cuda:12.4.1-cudnn-runtime-ubuntu22.04
 
 ENV DEBIAN_FRONTEND=noninteractive \

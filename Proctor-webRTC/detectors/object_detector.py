@@ -109,7 +109,6 @@ class ObjectDetector:
     def __init__(
         self,
         model_path:    str   = "finalBestV5.pt",
-        device:        str   = "cuda",
         default_conf:  float = 0.50,
         person_conf:   float = 0.30,
         phone_conf:    float = 0.65,

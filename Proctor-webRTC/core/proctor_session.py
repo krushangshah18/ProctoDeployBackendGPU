@@ -17,7 +17,7 @@ from pathlib import Path
 
 import numpy as np
 
-from detectors import FaceMeshProvider, HeadPoseDetector, LipDetector, merge_by_class
+from detectors import FaceMeshProvider, HeadPoseDetector, LipDetector
 from core.alert_engine import AlertEngine
 from core.head_tracker import HeadTracker
 from core.liveness import LivenessDetector

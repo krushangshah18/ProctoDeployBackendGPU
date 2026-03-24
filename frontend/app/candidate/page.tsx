@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState, useCallback } from "react";
-import { api } from "@/lib/api";
+import { api, createApi, pickLeastLoadedBackend } from "@/lib/api";
 import type { SSEEvent, RiskInfo } from "@/lib/types";
 
 const RISK_COLORS: Record<string, string> = {
@@ -24,6 +24,9 @@ export default function CandidatePage() {
   const pcRef             = useRef<RTCPeerConnection | null>(null);
   const streamRef         = useRef<MediaStream | null>(null);
   const sseRef            = useRef<EventSource | null>(null);
+  // Tracks which backend this session is on — set in startSession, read by all event handlers.
+  // Using a ref (not state) so handlers never have stale closures without needing deps updates.
+  const sessionApiRef        = useRef(api);
   // Refs so event handlers always have the latest values without stale closures
   const pcIdRef              = useRef<string | null>(null);
   const statusRef            = useRef<string>("idle");
@@ -73,7 +76,7 @@ export default function CandidatePage() {
     const count = tabSwitchCountRef.current;
     setTabSwitchCount(count);
 
-    api.tabSwitch(pcIdRef.current).then(result => {
+    sessionApiRef.current.tabSwitch(pcIdRef.current).then(result => {
       setRisk(result.risk);
 
       if (result.risk.terminated) {
@@ -105,7 +108,7 @@ export default function CandidatePage() {
         // Tab became visible — re-sync risk state to catch any SSE events that
         // were lost while hidden (e.g. termination from no_person / multiple_people).
         if (statusRef.current === "connected" && pcIdRef.current) {
-          api.risk(pcIdRef.current).then(r => {
+          sessionApiRef.current.risk(pcIdRef.current).then(r => {
             setRisk(r);
             if (r.terminated && !terminationShownRef.current) {
               terminationShownRef.current = true;
@@ -138,7 +141,7 @@ export default function CandidatePage() {
     const handleFocus = () => {
       // Window regained focus — sync risk in case something happened while away
       if (statusRef.current === "connected" && pcIdRef.current) {
-        api.risk(pcIdRef.current).then(r => {
+        sessionApiRef.current.risk(pcIdRef.current).then(r => {
           setRisk(r);
           if (r.terminated && !terminationShownRef.current) {
             terminationShownRef.current = true;
@@ -195,7 +198,7 @@ export default function CandidatePage() {
   const connectSSE = useCallback((id: string) => {
     if (sseRef.current) sseRef.current.close();
 
-    const es = new EventSource(api.streamUrl(id));
+    const es = new EventSource(sessionApiRef.current.streamUrl(id));
     sseRef.current = es;
 
     es.onmessage = (e) => {
@@ -228,7 +231,12 @@ export default function CandidatePage() {
     terminationShownRef.current = false;
 
     try {
-      // 1. Get camera + mic
+      // 1. Pick the least-loaded backend — throws if all are full
+      const chosenUrl = await pickLeastLoadedBackend();
+      const sessionApi = createApi(chosenUrl);
+      sessionApiRef.current = sessionApi;
+
+      // 2. Get camera + mic
       const stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true })
         .catch(() => navigator.mediaDevices.getUserMedia({ video: true, audio: false }));
 
@@ -237,7 +245,7 @@ export default function CandidatePage() {
         videoRef.current.srcObject = stream;
       }
 
-      // 2. Create peer connection
+      // 3. Create peer connection
       const pc = new RTCPeerConnection({
         iceServers: [
           { urls: "stun:stun.l.google.com:19302" },
@@ -266,12 +274,12 @@ export default function CandidatePage() {
         }
       };
 
-      // 3. Create offer immediately — trickle ICE (no wait for gathering)
+      // 4. Create offer immediately — trickle ICE (no wait for gathering)
       const offer = await pc.createOffer();
       await pc.setLocalDescription(offer);
 
-      // 4. Send offer to server immediately
-      const answer = await api.offer(pc.localDescription!.sdp, pc.localDescription!.type);
+      // 5. Send offer to the chosen backend
+      const answer = await sessionApi.offer(pc.localDescription!.sdp, pc.localDescription!.type);
 
       if (answer.error) {
         throw new Error(answer.error);
@@ -281,14 +289,14 @@ export default function CandidatePage() {
       setLabel(answer.device_label);
       await pc.setRemoteDescription(answer);
 
-      // 5. Trickle ICE — send each candidate as it is discovered
+      // 6. Trickle ICE — send each candidate as it is discovered
       pc.onicecandidate = ({ candidate }) => {
         if (candidate) {
-          api.sendIceCandidate(answer.device_id, candidate.toJSON());
+          sessionApi.sendIceCandidate(answer.device_id, candidate.toJSON());
         }
       };
 
-      // 6. Connect SSE for real-time alerts
+      // 7. Connect SSE for real-time alerts
       connectSSE(answer.device_id);
 
     } catch (err: unknown) {

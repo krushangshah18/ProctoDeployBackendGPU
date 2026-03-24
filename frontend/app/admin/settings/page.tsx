@@ -40,6 +40,7 @@ const THRESHOLD_META: Record<string, { label: string; min: number; max: number; 
   BLINK_MAX_DURATION_S  : { label: "Blink max duration",       min: 0.15, max: 1.00, step: 0.05, unit: "s" },
   MIN_FACE_WIDTH        : { label: "Min face width",           min: 40,   max: 200,  step: 5,    unit: "px" },
   MIN_FACE_HEIGHT       : { label: "Min face height",          min: 50,   max: 250,  step: 5,    unit: "px" },
+  FACE_HIDDEN_RECENCY_S : { label: "Face hidden recency gate", min: 1.0,  max: 15.0, step: 0.5,  unit: "s"  },
 };
 
 const OBJECT_META: Record<string, { label: string; min: number; max: number; step: number; unit?: string }> = {
@@ -368,14 +369,14 @@ function SettingsPanel({ backendUrl }: { backendUrl: string }) {
                 onChange={v => setThreshold(k, v)} />;
             })}
             <SectionHeader>Face Size & Blink</SectionHeader>
-            {["EAR_THRESHOLD","MIN_FACE_WIDTH","MIN_FACE_HEIGHT"].map(k => {
+            {["EAR_THRESHOLD","MIN_FACE_WIDTH","MIN_FACE_HEIGHT","FACE_HIDDEN_RECENCY_S"].map(k => {
               const m = THRESHOLD_META[k];
               return <NumInput key={k} label={m.label} unit={m.unit}
                 value={draft.thresholds[k] ?? 0} min={m.min} max={m.max} step={m.step}
                 onChange={v => setThreshold(k, v)} />;
             })}
             <p className="text-xs pt-1" style={{ color: "var(--muted)" }}>
-              Threshold changes apply to new sessions only.
+              Face size and blink thresholds apply to new sessions only. Face hidden recency applies immediately to active sessions.
             </p>
           </div>
         )}

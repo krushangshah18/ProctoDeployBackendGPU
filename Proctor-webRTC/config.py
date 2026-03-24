@@ -52,6 +52,12 @@ GAZE_RIGHT      =  0.13
 MIN_FACE_WIDTH  = 110   # pixels
 MIN_FACE_HEIGHT = 120   # pixels
 
+# ── Face Hidden ───────────────────────────────────────────────────────────────
+# face_hidden fires only within this many seconds after the face was last seen.
+# Prevents false positives when YOLO sees a person but MediaPipe finds no face
+# on a dark/covered camera that has never had a face at all.
+FACE_HIDDEN_RECENCY_S = 4.0
+
 # ── Blink / EAR ──────────────────────────────────────────────────────────────
 EAR_THRESHOLD        = 0.20
 # Time-based blink window: EAR must stay below threshold for at least

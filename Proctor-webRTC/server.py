@@ -727,6 +727,7 @@ def _get_all_settings() -> dict:
             "BLINK_MAX_DURATION_S"  : _v("BLINK_MAX_DURATION_S",   0.40),
             "MIN_FACE_WIDTH"        : _v("MIN_FACE_WIDTH",          110),
             "MIN_FACE_HEIGHT"       : _v("MIN_FACE_HEIGHT",         120),
+            "FACE_HIDDEN_RECENCY_S" : _v("FACE_HIDDEN_RECENCY_S",   4.0),
         },
         "objects": {
             "OBJECT_WINDOW"         : _v("OBJECT_WINDOW",          15),
@@ -831,6 +832,8 @@ async def post_admin_settings(request: Request):
                     session.head_tracker.threshold = v
                 elif k == "GAZE_THRESHOLD":
                     session._cfg["GAZE_THRESHOLD"] = v
+                elif k == "FACE_HIDDEN_RECENCY_S":
+                    session._face_hidden_recency_s = v
         changed["thresholds"] = {k: float(v) for k, v in body["thresholds"].items()}
 
     # ── Object settings (new sessions only — obj_tracker built at session init) ─

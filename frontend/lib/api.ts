@@ -160,5 +160,40 @@ export function createApi(base: string) {
   };
 }
 
-// Default api instance — used by candidate page and anywhere a single backend is sufficient.
+// Default api instance — used anywhere a single backend is sufficient.
 export const api = createApi(BASE_1);
+
+/**
+ * Checks /capacity on every configured backend in parallel and returns the URL
+ * with the most free session slots (least loaded).
+ * Throws a user-friendly error if all backends are at capacity or unreachable.
+ */
+export async function pickLeastLoadedBackend(): Promise<string> {
+  const results = await Promise.allSettled(
+    BACKEND_URLS.map(async url => {
+      const controller = new AbortController();
+      const t = setTimeout(() => controller.abort(), 3000);
+      try {
+        const r = await fetch(`${url}/capacity`, { signal: controller.signal });
+        if (!r.ok) throw new Error("error");
+        const data = await r.json() as { active: number; max: number; available: boolean };
+        return { url, active: data.active, available: data.available };
+      } finally {
+        clearTimeout(t);
+      }
+    })
+  );
+
+  const available = results
+    .filter((r): r is PromiseFulfilledResult<{ url: string; active: number; available: boolean }> =>
+      r.status === "fulfilled" && r.value.available
+    )
+    .map(r => r.value)
+    .sort((a, b) => a.active - b.active); // least loaded first
+
+  if (available.length === 0) {
+    throw new Error("All exam servers are currently full. Please try again in a few minutes.");
+  }
+
+  return available[0].url;
+}
